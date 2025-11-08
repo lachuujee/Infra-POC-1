@@ -1,28 +1,145 @@
 {
-  "Amazon VPC":"vpc","AWS VPC":"vpc","VPC":"vpc",
-  "Amazon CloudFront":"cloudfront","AWS CloudFront":"cloudfront","CDN":"cloudfront",
-  "Amazon API Gateway":"api-gateway","AWS API Gateway":"api-gateway",
-  "Amazon ALB":"alb","AWS ALB":"alb","Load Balancer (ALB)":"alb",
-  "Amazon NLB":"nlb","AWS NLB":"nlb",
-  "Amazon CloudWatch":"cloudwatch","AWS CloudWatch":"cloudwatch",
-  "Amazon CloudFormation":"cloudformation","AWS CloudFormation":"cloudformation",
-  "Amazon KMS":"kms","AWS KMS":"kms",
-  "Amazon WAF":"waf-cdn","AWS WAF (CDN)":"waf-cdn",
-  "Amazon IAM":"iam","AWS IAM":"iam","Instance Profile":"instance-profile",
-  "Amazon S3":"s3","AWS S3":"s3",
-  "Amazon DynamoDB":"dynamodb","AWS DynamoDB":"dynamodb",
-  "Amazon EC2":"ec2","AWS EC2":"ec2",
-  "Amazon ECR":"ecr","AWS ECR":"ecr",
-  "Amazon ECS":"ecs","AWS ECS":"ecs",
-  "Amazon EFS":"efs","AWS EFS":"efs",
-  "Amazon EBS":"ebs","AWS EBS":"ebs",
-  "Amazon ElastiCache":"elasticache",
-  "Amazon Neptune":"neptune",
-  "Amazon Redshift":"redshift",
-  "Amazon Rekognition":"rekognition",
-  "Amazon SageMaker":"sagemaker",
-  "Amazon Textract":"textract",
-  "Amazon Aurora (PostgreSQL)":"aurora-pgsql",
-  "Amazon Bedrock":"bedrock",
-  "KeyPair":"keypair"
+  "Amazon VPC": "vpc",
+  "AWS VPC": "vpc",
+  "VPC": "vpc",
+  "VPC Red": "vpc",
+
+  "Amazon CloudFront": "cloudfront",
+  "AWS CloudFront": "cloudfront",
+  "CloudFront": "cloudfront",
+  "CDN": "cloudfront",
+
+  "Amazon API Gateway": "api-gateway",
+  "AWS API Gateway": "api-gateway",
+  "API Gateway": "api-gateway",
+  "APIGW": "api-gateway",
+  "API GW": "api-gateway",
+
+  "Amazon ALB": "alb",
+  "AWS ALB": "alb",
+  "Application Load Balancer": "alb",
+  "ALB": "alb",
+  "Load Balancer (ALB)": "alb",
+
+  "Amazon NLB": "nlb",
+  "AWS NLB": "nlb",
+  "Network Load Balancer": "nlb",
+  "NLB": "nlb",
+
+  "Amazon CloudWatch": "cloudwatch",
+  "AWS CloudWatch": "cloudwatch",
+  "CloudWatch": "cloudwatch",
+
+  "Amazon CloudFormation": "cloudformation",
+  "AWS CloudFormation": "cloudformation",
+  "CloudFormation": "cloudformation",
+  "CFn": "cloudformation",
+
+  "Amazon KMS": "kms",
+  "AWS KMS": "kms",
+  "KMS": "kms",
+
+  "Amazon WAF": "waf-cdn",
+  "AWS WAF (CDN)": "waf-cdn",
+  "WAF (CDN)": "waf-cdn",
+  "CloudFront WAF": "waf-cdn",
+  "WAF CloudFront": "waf-cdn",
+
+  "Amazon WAF (Regional)": "waf-regional",
+  "AWS WAF (Regional)": "waf-regional",
+  "WAF (Regional)": "waf-regional",
+  "WAF Regional": "waf-regional",
+
+  "Amazon IAM": "iam",
+  "AWS IAM": "iam",
+  "IAM": "iam",
+
+  "Instance Profile": "instance-profile",
+  "IAM Instance Profile": "instance-profile",
+
+  "Amazon S3": "s3",
+  "AWS S3": "s3",
+  "S3": "s3",
+  "S3 Bucket": "s3",
+
+  "Amazon DynamoDB": "dynamodb",
+  "AWS DynamoDB": "dynamodb",
+  "DynamoDB": "dynamodb",
+
+  "Amazon EC2": "ec2",
+  "AWS EC2": "ec2",
+  "EC2": "ec2",
+
+  "Amazon ECR": "ecr",
+  "AWS ECR": "ecr",
+  "ECR": "ecr",
+
+  "Amazon ECS": "ecs",
+  "AWS ECS": "ecs",
+  "ECS": "ecs",
+
+  "Amazon EFS": "efs",
+  "AWS EFS": "efs",
+  "EFS": "efs",
+
+  "Amazon EBS": "ebs",
+  "AWS EBS": "ebs",
+  "EBS": "ebs",
+  "EBS Volume": "ebs",
+
+  "Amazon ElastiCache": "elasticache",
+  "AWS ElastiCache": "elasticache",
+  "ElastiCache": "elasticache",
+  "Elastic Cache": "elasticache",
+  "ElastiCache Redis": "elasticache",
+  "Redis Cache": "elasticache",
+
+  "Amazon Neptune": "neptune",
+  "AWS Neptune": "neptune",
+  "Neptune": "neptune",
+
+  "Amazon Redshift": "redshift",
+  "AWS Redshift": "redshift",
+  "Redshift": "redshift",
+
+  "Amazon Rekognition": "rekognition",
+  "AWS Rekognition": "rekognition",
+  "Rekognition": "rekognition",
+  "Recognization": "rekognition",
+
+  "Amazon SageMaker": "sagemaker",
+  "AWS SageMaker": "sagemaker",
+  "SageMaker": "sagemaker",
+
+  "Amazon Textract": "textract",
+  "AWS Textract": "textract",
+  "Textract": "textract",
+  "Amazon Extract": "textract",
+  "AWS Extract": "textract",
+  "Extract": "textract",
+
+  "Amazon Aurora": "aurora-pgsql",
+  "Amazon Aurora (PostgreSQL)": "aurora-pgsql",
+  "AWS Aurora (PostgreSQL)": "aurora-pgsql",
+  "Aurora PostgreSQL": "aurora-pgsql",
+  "Aurora Postgres": "aurora-pgsql",
+  "Aurora PG": "aurora-pgsql",
+  "Aurora-PG": "aurora-pgsql",
+
+  "Amazon Bedrock": "bedrock",
+  "AWS Bedrock": "bedrock",
+  "Bedrock": "bedrock",
+
+  "AWS ACM": "acm",
+  "Amazon Certificate Manager": "acm",
+  "ACM": "acm",
+  "Certificate Manager": "acm",
+
+  "AWS Glue": "glue",
+  "Amazon Glue": "glue",
+  "Glue": "glue",
+
+  "KeyPair": "keypair",
+  "Key Pair": "keypair",
+  "EC2 Key Pair": "keypair"
 }
