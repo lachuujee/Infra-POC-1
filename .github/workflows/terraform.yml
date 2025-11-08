@@ -1,0 +1,105 @@
+name: Terraform Scripts-POC (Terragrunt)
+
+on:
+  workflow_dispatch:
+    inputs:
+      intake_id:
+        description: "users/<INTAKE_ID> (e.g., intake_001)"
+        required: true
+        default: "intake_001"
+
+jobs:
+  tf:
+    runs-on: ubuntu-latest
+    env:
+      AWS_DEFAULT_REGION: us-east-1
+      INTAKE_DIR: live/sandbox/${{ github.event.inputs.intake_id }}
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Export AWS credentials from INFRA_WBD_SECRET
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! command -v jq >/dev/null 2>&1; then
+            sudo apt-get update -y && sudo apt-get install -y jq
+          fi
+          creds='${{ secrets.INFRA_WBD_SECRET }}'
+          AKID=$(jq -r '.AWS_ACCESS_KEY_ID // empty' <<< "$creds")
+          SAK=$(jq -r '.AWS_SECRET_ACCESS_KEY // empty' <<< "$creds")
+          if [[ -z "$AKID" || -z "$SAK" ]]; then
+            echo "::error title=Missing keys in INFRA_WBD_SECRET::Expected JSON with AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY"
+            exit 1
+          fi
+          {
+            echo "AWS_ACCESS_KEY_ID=$AKID"
+            echo "AWS_SECRET_ACCESS_KEY=$SAK"
+          } >> "$GITHUB_ENV"
+          echo "Loaded AWS_ACCESS_KEY_ID (len=${#AKID}), AWS_SECRET_ACCESS_KEY (len=${#SAK})"
+
+      - name: Verify AWS env presence
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "${AWS_ACCESS_KEY_ID:-}" ]] || { echo "::error ::AWS_ACCESS_KEY_ID not set"; exit 1; }
+          [[ -n "${AWS_SECRET_ACCESS_KEY:-}" ]] || { echo "::error ::AWS_SECRET_ACCESS_KEY not set"; exit 1; }
+          echo "AWS env variables are present."
+
+      - name: Show caller identity (should be DESTINATION account)
+        run: aws sts get-caller-identity
+
+      - name: Install Terraform
+        run: |
+          curl -sSLo terraform.zip https://releases.hashicorp.com/terraform/1.7.5/terraform_1.7.5_linux_amd64.zip
+          sudo unzip -o terraform.zip -d /usr/local/bin
+          terraform -version
+
+      - name: Install Terragrunt
+        run: |
+          TG_VERSION=0.66.9
+          curl -sSL -o terragrunt https://github.com/gruntwork-io/terragrunt/releases/download/v${TG_VERSION}/terragrunt_linux_amd64
+          sudo install -m 0755 terragrunt /usr/local/bin/terragrunt
+          terragrunt --version
+
+      - name: Plan & Apply (IAM → S3 → VPC → KeyPair → EC2 → LB → CDN → WAF → redis_cache → ecs)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          apply_if_exists () {
+            local dir="$1"
+            if [[ -d "$dir" ]]; then
+              echo "::group::Applying $dir"
+              cd "$dir"
+              terragrunt init -upgrade --terragrunt-non-interactive
+              terragrunt validate --terragrunt-non-interactive
+              terragrunt plan -out=tfplan.bin --terragrunt-non-interactive
+              terragrunt apply -auto-approve tfplan.bin --terragrunt-non-interactive
+              cd - >/dev/null
+              echo "::endgroup::"
+            else
+              echo "SKIP: $dir (not present)"
+            fi
+          }
+
+          # Parent marker for find_in_parent_folders()
+          if [[ ! -f "$INTAKE_DIR/terragrunt.hcl" ]]; then
+            echo "locals {}" > "$INTAKE_DIR/terragrunt.hcl"
+          fi
+
+          # apply_if_exists "$INTAKE_DIR/iam/instance_profile"
+          # apply_if_exists "$INTAKE_DIR/s3"
+          # apply_if_exists "$INTAKE_DIR/vpc"
+          # apply_if_exists "$INTAKE_DIR/keypair"
+          # apply_if_exists "$INTAKE_DIR/ec2"
+          # apply_if_exists "$INTAKE_DIR/lb"
+          # apply_if_exists "$INTAKE_DIR/cdn"
+          # apply_if_exists "$INTAKE_DIR/waf/cdn_waf"
+          # apply_if_exists "$INTAKE_DIR/aurora-pgsql"
+          # apply_if_exists "$INTAKE_DIR/redis_cache"
+          # apply_if_exists "$INTAKE_DIR/ecs"
+          # apply_if_exists "$INTAKE_DIR/efs"
+          # apply_if_exists "$INTAKE_DIR/ebs"
+          apply_if_exists "$INTAKE_DIR/redshift"
