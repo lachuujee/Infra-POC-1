@@ -1,0 +1,42 @@
+{
+  "current_enabled": [
+    "ebs",
+    "ec2",
+    "efs",
+    "iam/instance_profile",
+    "keypair",
+    "vpc"
+  ],
+  "ever_provisioned": [
+    "ebs",
+    "ec2",
+    "efs",
+    "iam/instance_profile",
+    "keypair",
+    "vpc"
+  ],
+  "history": [
+    {
+      "version": "V1",
+      "timestamp": "2025-11-10T09:00:30.234037Z",
+      "enabled_now": [
+        "ebs",
+        "ec2",
+        "efs",
+        "iam/instance_profile",
+        "keypair",
+        "vpc"
+      ],
+      "added": [
+        "ebs",
+        "ec2",
+        "efs",
+        "iam/instance_profile",
+        "keypair",
+        "vpc"
+      ],
+      "removed": [],
+      "destroy_plan": []
+    }
+  ]
+}
