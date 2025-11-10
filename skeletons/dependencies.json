@@ -1,0 +1,25 @@
+{
+  "ec2": { "enable": ["iam/instance_profile", "keypair"], "copy": [] },
+
+  "cloudfront": { "enable": ["waf/cdn_waf", "acm"], "copy": [] },
+
+  "iam/instance_profile": { "enable": [], "copy": [] },
+  "keypair": { "enable": [], "copy": [] },
+  "waf/cdn_waf": { "enable": [], "copy": [] },
+  "acm": { "enable": [], "copy": [] },
+
+  "vpc": { "enable": [], "copy": [] },
+  "s3": { "enable": [], "copy": [] },
+  "efs": { "enable": [], "copy": [] },
+  "ebs": { "enable": [], "copy": [] },
+  "ecs": { "enable": [], "copy": [] },
+  "nlb": { "enable": [], "copy": [] },
+  "alb": { "enable": [], "copy": [] },
+  "api-gateway": { "enable": [], "copy": [] },
+  "elasticache": { "enable": [], "copy": [] },
+  "redshift": { "enable": [], "copy": [] },
+  "aurora-pgsql": { "enable": [], "copy": [] },
+  "kms": { "enable": [], "copy": [] },
+  "waf-regional": { "enable": [], "copy": [] },
+  "iam": { "enable": [], "copy": [] }
+}
