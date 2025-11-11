@@ -1,0 +1,9 @@
+{
+  "modules_to_destroy": [
+    "ebs",
+    "efs",
+    "iam"
+  ],
+  "requested_at": "2025-11-11T19:08:12.479128Z",
+  "version": "V2"
+}
