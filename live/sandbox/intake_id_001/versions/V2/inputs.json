@@ -14,23 +14,26 @@
   "iam_role": "arn:aws:iam::123456789012:role/SandboxProvisioningRole",
   "environment": "dev",
   "is_modified": true,
+  "is_extended": true,
+  "is_decommissioned": true,
+  "decommission_type": "manual",
   "version": 2,
   "modules": {
     "AWS vpc": {
       "name": "sbx_intake_id_001-vpc",
-      "enabled": true
+      "enabled": false
     },
     "AWS ec2": {
       "name": "sbx_intake_id_001-ec2",
-      "enabled": true
+      "enabled": false
     },
     "AWS cdn": {
       "name": "sbx_intake_id_001-cdn",
-      "enabled": true
+      "enabled": false
     },
     "AWS redshift": {
       "name": "sbx_intake_id_001-redshift",
-      "enabled": true
+      "enabled": false
     },
     "AWS efs": {
       "name": "sbx_intake_id_001-efs",
