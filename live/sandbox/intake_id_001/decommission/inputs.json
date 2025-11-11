@@ -16,38 +16,52 @@
   "is_modified": true,
   "version": "V2",
   "modules": {
-    "AWS ebs": {
-      "name": "sbx_intake_id_001-ebs",
+    "AWS vpc": {
+      "name": "sbx_intake_id_001-vpc",
       "enabled": false,
-      "slug": "ebs",
+      "slug": "vpc",
       "previous_config": {
-        "name": "sbx_intake_id_001-ebs",
+        "name": "sbx_intake_id_001-vpc",
         "enabled": false,
-        "slug": "ebs"
+        "slug": "vpc"
       },
       "status": "decommissioned"
     },
-    "AWS efs": {
-      "name": "sbx_intake_id_001-efs",
+    "AWS ec2": {
+      "name": "sbx_intake_id_001-ec2",
       "enabled": false,
-      "slug": "efs",
+      "slug": "ec2",
       "previous_config": {
-        "name": "sbx_intake_id_001-efs",
+        "name": "sbx_intake_id_001-ec2",
         "enabled": false,
-        "slug": "efs"
+        "slug": "ec2"
       },
       "status": "decommissioned"
     },
-    "AWS iam": {
-      "name": "sbx_intake_id_001-iam",
+    "AWS cdn": {
+      "name": "sbx_intake_id_001-cdn",
       "enabled": false,
-      "slug": "iam",
+      "slug": "cdn",
       "previous_config": {
-        "name": "sbx_intake_id_001-iam",
-        "enabled": true,
-        "slug": "iam"
+        "name": "sbx_intake_id_001-cdn",
+        "enabled": false,
+        "slug": "cdn"
+      },
+      "status": "decommissioned"
+    },
+    "AWS redshift": {
+      "name": "sbx_intake_id_001-redshift",
+      "enabled": false,
+      "slug": "redshift",
+      "previous_config": {
+        "name": "sbx_intake_id_001-redshift",
+        "enabled": false,
+        "slug": "redshift"
       },
       "status": "decommissioned"
     }
-  }
+  },
+  "is_extended": true,
+  "is_decommissioned": true,
+  "decommission_type": "manual"
 }
