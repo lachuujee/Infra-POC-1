@@ -13,8 +13,8 @@
   "aws_account_id": "123456789012",
   "iam_role": "arn:aws:iam::123456789012:role/SandboxProvisioningRole",
   "environment": "dev",
-  "is_modified": false,
-  "version": 1,
+  "is_modified": true,
+  "version": 2,
   "modules": {
     "AWS vpc": {
       "name": "sbx_intake_id_001-vpc",
@@ -24,17 +24,21 @@
       "name": "sbx_intake_id_001-ec2",
       "enabled": true
     },
-    "AWS ebs": {
-      "name": "sbx_intake_id_001-ebs",
+    "AWS cdn": {
+      "name": "sbx_intake_id_001-cdn",
+      "enabled": true
+    },
+    "AWS redshift": {
+      "name": "sbx_intake_id_001-redshift",
       "enabled": true
     },
     "AWS efs": {
       "name": "sbx_intake_id_001-efs",
-      "enabled": true
+      "enabled": false
     },
-    "AWS iam": {
-      "name": "sbx_intake_id_001-iam",
-      "enabled": true
+    "AWS ebs": {
+      "name": "sbx_intake_id_001-ebs",
+      "enabled": false
     }
   }
 }
