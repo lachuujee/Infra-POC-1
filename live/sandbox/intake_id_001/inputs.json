@@ -18,13 +18,25 @@
   "modules": {
     "AWS vpc": {
       "name": "sbx_intake_id_001-vpc",
-      "enabled": true,
-      "slug": "vpc"
+      "enabled": false,
+      "slug": "vpc",
+      "previous_config": {
+        "name": "sbx_intake_id_001-vpc",
+        "enabled": false,
+        "slug": "vpc"
+      },
+      "status": "decommissioned"
     },
     "AWS ec2": {
       "name": "sbx_intake_id_001-ec2",
-      "enabled": true,
-      "slug": "ec2"
+      "enabled": false,
+      "slug": "ec2",
+      "previous_config": {
+        "name": "sbx_intake_id_001-ec2",
+        "enabled": false,
+        "slug": "ec2"
+      },
+      "status": "decommissioned"
     },
     "AWS ebs": {
       "name": "sbx_intake_id_001-ebs",
@@ -61,13 +73,28 @@
     },
     "AWS cdn": {
       "name": "sbx_intake_id_001-cdn",
-      "enabled": true,
-      "slug": "cdn"
+      "enabled": false,
+      "slug": "cdn",
+      "previous_config": {
+        "name": "sbx_intake_id_001-cdn",
+        "enabled": false,
+        "slug": "cdn"
+      },
+      "status": "decommissioned"
     },
     "AWS redshift": {
       "name": "sbx_intake_id_001-redshift",
-      "enabled": true,
-      "slug": "redshift"
+      "enabled": false,
+      "slug": "redshift",
+      "previous_config": {
+        "name": "sbx_intake_id_001-redshift",
+        "enabled": false,
+        "slug": "redshift"
+      },
+      "status": "decommissioned"
     }
-  }
+  },
+  "is_extended": true,
+  "is_decommissioned": true,
+  "decommission_type": "manual"
 }
