@@ -1,34 +1,72 @@
+# Simple: EC2 Terragrunt config (provision + works from /decommission too)
+
 # Ensure VPC, IAM instance-profile, KeyPair apply first
 dependencies {
   paths = ["../vpc", "../iam/instance_profile", "../keypair"]
 }
 
 locals {
-  cfg    = jsondecode(file(find_in_parent_folders("inputs.json")))
+  # Where we are
+  this_dir        = get_terragrunt_dir()
+  parent_dir      = dirname(local.this_dir)
+  is_decommission = basename(local.parent_dir) == "decommission"
+
+  # Load inputs (prefer scoped decommission file if present)
+  decom_inputs_path = "${local.parent_dir}/decommission.inputs.json"
+  cfg = fileexists(local.decom_inputs_path)
+      ? jsondecode(file(local.decom_inputs_path))
+      : jsondecode(file(find_in_parent_folders("inputs.json")))
+
+  # Identify component and intake dir/id (works in active and /decommission)
+  component  = basename(local.this_dir)                                  # "ec2"
+  intake_dir = local.is_decommission ? dirname(local.parent_dir) : local.parent_dir
+  intake_id  = basename(local.intake_dir)
+
+  # Derive <infra_root> from inputs.json path so this works in personal & office repos
+  # .../<infra_root>/live/sandbox/<intake_id>/...
+  infra_root = dirname(dirname(dirname(local.intake_dir)))
+
+  # Region / env / req
   region = coalesce(
     try(local.cfg.aws_region, ""),
     get_env("AWS_REGION", ""),
     get_env("AWS_DEFAULT_REGION", ""),
     "us-east-1"
   )
-  component = basename(get_terragrunt_dir())          # "ec2"
-  intake_id = basename(dirname(get_terragrunt_dir())) # "intake_001"
+  env = try(local.cfg.environment, "SBX")
+  req = try(local.cfg.request_id, local.intake_id)
 
-  env  = try(local.cfg.environment, "SBX")
-  req  = try(local.cfg.request_id, local.intake_id)
-  base = "${local.env}_${local.req}"                  # e.g., SBX_intake_id_001
+  # Resolve the module block regardless of label style ("ec2", "AWS ec2", "EC2")
+  mod = try(
+    local.cfg.modules[local.component],
+    local.cfg.modules["AWS ${local.component}"],
+    local.cfg.modules[upper(local.component)],
+    {}
+  )
+
+  # Uniform Name: sbx_intake_id_001-<component>-dev
+  name_base = lower(try(local.cfg.sandbox_name, "${local.env}_${local.req}"))
+  name_env  = lower(local.env)
+  name_std  = "${local.name_base}-${local.component}-${local.name_env}"
+
+  # Relative up for dependency paths
+  rel_up = local.is_decommission ? "../.." : ".."
+
+  # State prefix (stable)
+  state_prefix = "wbd/sandbox/${local.intake_id}"
 }
 
 terraform {
-  source = "${get_repo_root()}/modules/${local.component}"
+  # Dynamic source path (works if modules/ is at repo-root or inside Sandbox-Infra/)
+  source = "${local.infra_root}/modules/${local.component}"
 }
 
 remote_state {
   backend = "s3"
   config = {
     bucket  = "wbd-tf-state-sandbox"
-    key     = "wbd/sandbox/${local.intake_id}/${local.component}/terraform.tfstate"
-    region  = try(local.cfg.state.region, "us-east-1")  # use bucket's region
+    key     = "${local.state_prefix}/${local.component}/terraform.tfstate"
+    region  = try(local.cfg.state.region, "us-east-1")
     encrypt = true
   }
 }
@@ -44,16 +82,19 @@ EOF
 }
 
 inputs = {
-  enabled = try(local.cfg.modules[local.component].enabled, false)
+  # If you prefer using run-all destroy in /decommission, keep this true/ignored by destroy.
+  # If you want "apply" to decommission, set enabled = local.is_decommission ? false : try(local.mod.enabled, false)
+  enabled = try(local.mod.enabled, false)
 
-  name = try(local.cfg.modules[local.component].name, "${local.base}_ec2")
+  # Strict, uniform resource name
+  name = local.name_std
 
   tags_extra = merge(
     try(local.cfg.tags, {}),
     {
-      Name        = local.base
-      ServiceName = "EC2"
-      Service     = "EC2_${local.intake_id}"
+      Name        = local.name_std
+      ServiceName = upper(local.component)
+      Service     = "${upper(local.component)}_${local.intake_id}"
       Environment = local.env
       RequestID   = local.req
       Requester   = try(local.cfg.requester, "")
@@ -61,17 +102,20 @@ inputs = {
     }
   )
 
-  instance_count    = try(local.cfg.modules.ec2.instance_count, 1)
-  instance_type     = try(local.cfg.modules.ec2.instance_type, "t2.micro")
-  ami_id            = try(local.cfg.modules.ec2.ami_id, null)
-  ami_ssm_parameter = try(local.cfg.modules.ec2.ami_ssm_parameter, "/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2")
+  # --- EC2 module inputs (unchanged defaults) ---
+  instance_count    = try(local.mod.instance_count, 1)
+  instance_type     = try(local.mod.instance_type, "t2.micro")
+  ami_id            = try(local.mod.ami_id, null)
+  ami_ssm_parameter = try(local.mod.ami_ssm_parameter, "/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2")
 
   subnet_role_keys  = ["api-a", "api-b"]
 
-  # remote-state locations the EC2 module reads
+  # Remote-state locations the EC2 module reads
   remote_state_bucket = "wbd-tf-state-sandbox"
-  remote_state_region = try(local.cfg.state.region, "us-east-1")  # use bucket's region
-  vpc_state_key       = "wbd/sandbox/${local.intake_id}/vpc/terraform.tfstate"
-  iam_state_key       = "wbd/sandbox/${local.intake_id}/iam/instance_profile/terraform.tfstate"
-  keypair_state_key   = "wbd/sandbox/${local.intake_id}/keypair/terraform.tfstate"
+  remote_state_region = try(local.cfg.state.region, "us-east-1")
+  vpc_state_key       = "${local.state_prefix}/vpc/terraform.tfstate"
+  iam_state_key       = "${local.state_prefix}/iam/instance_profile/terraform.tfstate"
+  keypair_state_key   = "${local.state_prefix}/keypair/terraform.tfstate"
 }
+
+# File: terragrunt.hcl (ec2)
