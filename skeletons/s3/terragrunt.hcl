@@ -1,28 +1,66 @@
+# Simple: S3 Terragrunt config
+
+# (No explicit dependencies for S3)
+
 locals {
-  cfg        = jsondecode(file(find_in_parent_folders("inputs.json")))
-  # Region: inputs.json -> env -> default
-  region     = coalesce(
-                 try(local.cfg.aws_region, ""),
-                 get_env("AWS_REGION", ""),
-                 get_env("AWS_DEFAULT_REGION", ""),
-                 "us-east-1"
-               )
-  component  = basename(get_terragrunt_dir())          # "s3"
-  intake_id  = basename(dirname(get_terragrunt_dir())) # "intake_001"
+  # Where we are (works in active and /decommission)
+  this_dir        = get_terragrunt_dir()
+  parent_dir      = dirname(local.this_dir)
+  is_decommission = basename(local.parent_dir) == "decommission"
+
+  # Intake dir/id
+  intake_dir = local.is_decommission ? dirname(local.parent_dir) : local.parent_dir
+  intake_id  = basename(local.intake_dir)
+
+  # Load inputs
+  cfg = jsondecode(file(find_in_parent_folders("inputs.json")))
+
+  # Component
+  component = basename(local.this_dir)  # "s3"
+
+  # Works in personal & office repos
+  # .../<infra_root>/live/sandbox/<intake_id>/...
+  infra_root = dirname(dirname(dirname(local.intake_dir)))
+
+  # Region / env / req
+  region = coalesce(
+    try(local.cfg.aws_region, ""),
+    get_env("AWS_REGION", ""),
+    get_env("AWS_DEFAULT_REGION", ""),
+    "us-east-1"
+  )
+  env = try(local.cfg.environment, "SBX")
+  req = try(local.cfg.request_id, local.intake_id)
+
+  # Module block tolerant to labels ("s3", "AWS s3", "S3")
+  mod = try(
+    local.cfg.modules[local.component],
+    local.cfg.modules["AWS ${local.component}"],
+    local.cfg.modules[upper(local.component)],
+    {}
+  )
+
+  # Uniform Name: sbx_intake_id_001-s3-dev
+  name_base = lower(try(local.cfg.sandbox_name, "${local.env}_${local.req}"))
+  name_env  = lower(local.env)
+  name_std  = "${local.name_base}-${local.component}-${local.name_env}"
+
+  # State prefix
+  state_prefix = "wbd/sandbox/${local.intake_id}"
 }
 
 terraform {
-  source = "${get_repo_root()}/modules/${local.component}"
+  # Dynamic module source
+  source = "${local.infra_root}/modules/${local.component}"
 }
 
 remote_state {
   backend = "s3"
   config = {
     bucket  = "wbd-tf-state-sandbox"
-    key     = "wbd/sandbox/${local.intake_id}/${local.component}/terraform.tfstate"
-    region  = local.region
+    key     = "${local.state_prefix}/${local.component}/terraform.tfstate"
+    region  = try(local.cfg.state.region, "us-east-1")
     encrypt = true
-    # no DynamoDB lock
   }
 }
 
@@ -37,28 +75,35 @@ EOF
 }
 
 inputs = {
-  # module expects region
+  # Enabled from inputs.json
+  enabled     = try(local.mod.enabled, false)
+
+  # Names
+  name        = local.name_std
+  request_id  = try(local.cfg.request_id, "")
+
+  # S3-specific
   region               = local.region
+  bucket_name_override = replace(lower(local.name_std), "_", "-")
 
-  # from inputs.json
-  enabled              = try(local.cfg.modules[local.component].enabled, true)
-  name                 = local.cfg.modules[local.component].name
-  request_id           = local.cfg.request_id
-  bucket_name_override = local.cfg.modules[local.component].name
-
-  # defaults
   versioning    = true
   block_public  = true
   force_destroy = false
-  kms_key_id    = null   # AWS-managed KMS
+  kms_key_id    = null
 
-  # cost/reporting tags
-  tags_extra = {
-    RequestID    = local.cfg.request_id
-    Environment  = try(local.cfg.environment, "sbx")
-    IntakeID     = local.intake_id
-    ServiceName  = upper(local.component)                  # S3
-    Service      = "${upper(local.component)}_${local.intake_id}"  # S3_intake_001
-    BU_Unit      = try(local.cfg.bu_unit, "WBD_sandbox")
-  }
+  # Tags
+  tags_extra = merge(
+    try(local.cfg.tags, {}),
+    {
+      Name        = local.name_std
+      ServiceName = upper(local.component)
+      Service     = "${upper(local.component)}_${local.intake_id}"
+      Environment = local.env
+      RequestID   = local.req
+      Requester   = try(local.cfg.requester, "")
+      BU_Unit     = try(local.cfg.bu_unit, "WBD")
+    }
+  )
 }
+
+# File: terragrunt.hcl (s3)
