@@ -2,7 +2,7 @@
 
 # CDN first
 dependencies {
-  paths = ["../../cdn"]
+  paths = ["${local.rel_up}/vpc"]
 }
 
 locals {
