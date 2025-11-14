@@ -1,76 +1,103 @@
-# Ensure VPC applies first
+# Simple: LB Terragrunt config
+
+# VPC first
 dependencies {
-  paths = ["../vpc"]
+  paths = ["${local.rel_up}/vpc"]
 }
 
 locals {
-  cfg    = jsondecode(file(find_in_parent_folders("inputs.json")))
-  region = coalesce(
-    try(local.cfg.aws_region, ""),
-    get_env("AWS_REGION", ""),
-    get_env("AWS_DEFAULT_REGION", ""),
-    "us-east-1"
-  )
+  # Where we are (active or /decommission)
+  this_dir        = get_terragrunt_dir()
+  parent_dir      = dirname(local.this_dir)
+  is_decommission = basename(local.parent_dir) == "decommission"
 
-  intake_id        = basename(dirname(get_terragrunt_dir()))
-  module_component = "lb"
-  component_key    = "lb"
+  # Intake dir/id
+  intake_dir = local.is_decommission ? dirname(local.parent_dir) : local.parent_dir
+  intake_id  = basename(local.intake_dir)
 
-  sandbox = try(local.cfg.sandbox_name, "sbx")
-  env     = try(local.cfg.environment, "SBX")
-  req     = try(local.cfg.request_id, local.intake_id)
-  base    = "${local.env}_${local.req}"
+  # Inputs
+  cfg = jsondecode(file(find_in_parent_folders("inputs.json")))
+
+  # Component
+  component = basename(local.this_dir)  # "lb"
+
+  # Wrapper-agnostic + versioned modules
+  # .../<infra_root>/live/sandbox/<intake_id>/...
+  infra_root  = dirname(dirname(dirname(local.intake_dir)))
+  modules_dir = coalesce(get_env("MODULES_DIR", ""), "modules")  # modules or modules/v1
+
+  # Region / env / req
+  region = coalesce(try(local.cfg.aws_region, ""), get_env("AWS_REGION", ""), get_env("AWS_DEFAULT_REGION", ""), "us-east-1")
+  env    = try(local.cfg.environment, "SBX")
+  req    = try(local.cfg.request_id, local.intake_id)
+
+  # Uniform Name: sbx_intake_id_001-lb-dev
+  name_base = lower(try(local.cfg.sandbox_name, "${local.env}_${local.req}"))
+  name_env  = lower(local.env)
+  name_std  = "${local.name_base}-${local.component}-${local.name_env}"
+
+  # Paths
+  state_prefix = "wbd/sandbox/${local.intake_id}"
+  rel_up       = local.is_decommission ? "../.." : ".."
+
+  # Convenience module blocks
+  mod_alb = try(local.cfg.modules.lb_alb, {})
+  mod_nlb = try(local.cfg.modules.lb_nlb, {})
 }
 
 terraform {
-  source = "${get_repo_root()}/modules/${local.module_component}"
+  # Dynamic module source (wrapper-friendly + versioned modules)
+  source = "${local.infra_root}/${local.modules_dir}/${local.component}"
 }
 
 remote_state {
   backend = "s3"
   config = {
-    bucket  = try(local.cfg.state.bucket, "wbd-tf-state-sandbox")
-    key     = "wbd/sandbox/${local.intake_id}/${local.component_key}/terraform.tfstate"
-    region  = local.region
+    bucket  = "wbd-tf-state-sandbox"
+    key     = "${local.state_prefix}/${local.component}/terraform.tfstate"
+    region  = try(local.cfg.state.region, "us-east-1")
     encrypt = true
   }
 }
 
+generate "provider" {
+  path      = "provider.tf"
+  if_exists = "overwrite_terragrunt"
+  contents  = <<EOF
+provider "aws" {
+  region = "${local.region}"
+}
+EOF
+}
+
 inputs = {
-  # naming
-  sandbox_name = local.sandbox
+  # Names / ids
+  env        = local.env
+  region     = local.region
+  request_id = local.req
 
-  # enable flags and names
-  alb_enabled = try(local.cfg.modules.lb_alb.enabled, false)
-  nlb_enabled = try(local.cfg.modules.lb_nlb.enabled, false)
-  alb_name    = try(local.cfg.modules.lb_alb.name, "")
-  nlb_name    = try(local.cfg.modules.lb_nlb.name, "")
+  # Enable flags and names (defaults adopt unified name)
+  alb_enabled = try(local.mod_alb.enabled, false)
+  nlb_enabled = try(local.mod_nlb.enabled, false)
+  alb_name    = try(local.mod_alb.name, "${local.name_std}-alb")
+  nlb_name    = try(local.mod_nlb.name, "${local.name_std}-nlb")
 
-  # exposure (default private)
-  public = coalesce(
-    try(local.cfg.modules.lb_alb.public, null),
-    try(local.cfg.modules.lb_nlb.public, null),
-    false
-  )
+  # Exposure (default private)
+  public = coalesce(try(local.mod_alb.public, null), try(local.mod_nlb.public, null), false)
 
-  # VPC state pointers
-  remote_state_bucket = try(local.cfg.state.bucket, "wbd-tf-state-sandbox")
-  remote_state_region = local.region
-  vpc_state_key       = "wbd/sandbox/${local.intake_id}/vpc/terraform.tfstate"
+  # Listener / TG defaults
+  listener_port = try(local.mod_alb.listener_port, 8090)
+  tg_port       = try(local.mod_alb.tg_port, 8090)
+  tg_protocol   = try(local.mod_alb.tg_protocol, "TCP")
+  target_type   = try(local.mod_alb.target_type, "ip")
 
-  # listeners / TGs
-  listener_port = 8090
-  tg_port       = 8090
-  tg_protocol   = "TCP"
-  target_type   = "ip"
-
-  # tags (kept in Terragrunt, same as earlier pattern)
+  # Tags (uniform)
   tags_extra = merge(
     try(local.cfg.tags, {}),
     {
-      Name        = local.base
-      ServiceName = "LB"
-      Service     = "LB_${local.intake_id}"
+      Name        = local.name_std
+      ServiceName = upper(local.component)                # LB
+      Service     = "${upper(local.component)}_${local.intake_id}"  # LB_<intake>
       Environment = local.env
       RequestID   = local.req
       Requester   = try(local.cfg.requester, "")
@@ -78,5 +105,10 @@ inputs = {
     }
   )
 
-  # Note: do NOT set alb_ingress_rules here. Edit variables.tf default if needed.
+  # --- State pointers at the very bottom ---
+  remote_state_bucket = "wbd-tf-state-sandbox"
+  remote_state_region = try(local.cfg.state.region, "us-east-1")
+  vpc_state_key       = "${local.state_prefix}/vpc/terraform.tfstate"
 }
+
+# File: terragrunt.hcl (lb)
