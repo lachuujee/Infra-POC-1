@@ -6,18 +6,24 @@ dependencies {
 }
 
 locals {
+  # Where we are (works in active and /decommission)
   this_dir        = get_terragrunt_dir()
   parent_dir      = dirname(local.this_dir)
   is_decommission = basename(local.parent_dir) == "decommission"
 
+  # Intake dir/id
   intake_dir = local.is_decommission ? dirname(local.parent_dir) : local.parent_dir
   intake_id  = basename(local.intake_dir)
 
+  # Inputs
   cfg = jsondecode(file(find_in_parent_folders("inputs.json")))
-  component = basename(local.this_dir)
 
+  # Component
+  component = basename(local.this_dir)  # "keypair"
+
+  # Repo layout + versioned modules support
   infra_root  = dirname(dirname(dirname(local.intake_dir)))
-  modules_dir = coalesce(get_env("MODULES_DIR", ""), "modules")
+  modules_dir = coalesce(get_env("MODULES_DIR", ""), "modules")  # e.g., modules or modules/v1
 
   # Region / env / req
   region = coalesce(
@@ -29,22 +35,26 @@ locals {
   env = try(local.cfg.environment, "SBX")
   req = try(local.cfg.request_id, local.intake_id)
 
-  name_base = lower(try(local.cfg.sandbox_name, "${local.env}_${local.req}"))
-  name_env  = lower(local.env)
-  name_std  = "${local.name_base}-${local.component}-${local.name_env}"
-
-  state_prefix = "wbd/sandbox/${local.intake_id}"
-  rel_up       = local.is_decommission ? "../.." : ".."
-
+  # Resolve module block (label tolerant)
   mod = try(
     local.cfg.modules[local.component],
     local.cfg.modules["AWS ${local.component}"],
     local.cfg.modules[upper(local.component)],
     {}
   )
+
+  # Uniform Name: sbx_intake_id_001-keypair-dev
+  name_base = lower(try(local.cfg.sandbox_name, "${local.env}_${local.req}"))
+  name_env  = lower(local.env)
+  name_std  = "${local.name_base}-${local.component}-${local.name_env}"
+
+  # State prefix (stable)
+  state_prefix = "wbd/sandbox/${local.intake_id}"
+  rel_up       = local.is_decommission ? "../.." : ".."
 }
 
 terraform {
+  # Dynamic source path (wrapper-friendly + versioned modules)
   source = "${local.infra_root}/${local.modules_dir}/${local.component}"
 }
 
@@ -62,14 +72,20 @@ generate "provider" {
   path      = "provider.tf"
   if_exists = "overwrite_terragrunt"
   contents  = <<EOF
-provider "aws" { region = "${local.region}" }
+provider "aws" {
+  region = "${local.region}"
+}
 EOF
 }
 
 inputs = {
-  enabled           = try(local.mod.enabled, false)
+  # Enabled comes from inputs.json
+  enabled = try(local.mod.enabled, false)
+
+  # Strict, uniform key name
   key_name_override = local.name_std
 
+  # Tags (tags_extra)
   tags_extra = merge(
     try(local.cfg.tags, {}),
     {
@@ -83,7 +99,7 @@ inputs = {
     }
   )
 
-  # --- State pointers (bottom) ---
+  # --- State pointers at the very bottom ---
   remote_state_bucket = "wbd-tf-state-sandbox"
   remote_state_region = try(local.cfg.state.region, "us-east-1")
 }
