@@ -3,21 +3,25 @@
 # (No explicit dependencies for VPC)
 
 locals {
-  # Where we are
-  this_dir   = get_terragrunt_dir()
-  parent_dir = dirname(local.this_dir)
+  # Where we are (works in active and /decommission)
+  this_dir        = get_terragrunt_dir()
+  parent_dir      = dirname(local.this_dir)
+  is_decommission = basename(local.parent_dir) == "decommission"
 
-  # Load inputs from the intake root
-  cfg = jsondecode(file(find_in_parent_folders("inputs.json")))
-
-  # Identify component and intake dir/id
-  component  = basename(local.this_dir)                                  # "vpc"
-  intake_dir = parent_dir
+  # Intake dir/id
+  intake_dir = local.is_decommission ? dirname(local.parent_dir) : local.parent_dir
   intake_id  = basename(local.intake_dir)
 
-  # Derive <infra_root> from inputs.json path so this works in personal & office repos
+  # Inputs
+  cfg = jsondecode(file(find_in_parent_folders("inputs.json")))
+
+  # Component
+  component = basename(local.this_dir)  # "vpc"
+
+  # Repo layout + versioned modules support
   # .../<infra_root>/live/sandbox/<intake_id>/...
-  infra_root = dirname(dirname(dirname(local.intake_dir)))
+  infra_root  = dirname(dirname(dirname(local.intake_dir)))
+  modules_dir = coalesce(get_env("MODULES_DIR", ""), "modules")  # e.g., modules or modules/v1
 
   # Region / env / req
   region = coalesce(
@@ -29,7 +33,7 @@ locals {
   env = try(local.cfg.environment, "SBX")
   req = try(local.cfg.request_id, local.intake_id)
 
-  # Resolve the module block regardless of label style ("vpc", "AWS vpc", "VPC")
+  # Resolve module block regardless of label style ("vpc", "AWS vpc", "VPC")
   mod = try(
     local.cfg.modules[local.component],
     local.cfg.modules["AWS ${local.component}"],
@@ -47,8 +51,8 @@ locals {
 }
 
 terraform {
-  # Dynamic source path (works if modules/ is at repo-root or inside Sandbox-Infra/)
-  source = "${local.infra_root}/modules/${local.component}"
+  # Dynamic source path (wrapper-friendly + versioned modules)
+  source = "${local.infra_root}/${local.modules_dir}/${local.component}"
 }
 
 remote_state {
