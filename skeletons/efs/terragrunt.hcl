@@ -6,7 +6,7 @@ dependencies {
 }
 
 locals {
-  # Where we are (active or /decommission)
+  # Where we are (works in active and /decommission)
   this_dir        = get_terragrunt_dir()
   parent_dir      = dirname(local.this_dir)
   is_decommission = basename(local.parent_dir) == "decommission"
@@ -21,17 +21,21 @@ locals {
   # Component
   component = basename(local.this_dir)  # "efs"
 
-  # Wrapper-agnostic + versioned modules
-  # .../<infra_root>/live/sandbox/<intake_id>/...
+  # Repo layout + versioned modules support
   infra_root  = dirname(dirname(dirname(local.intake_dir)))
-  modules_dir = coalesce(get_env("MODULES_DIR", ""), "modules")  # modules or modules/v1
+  modules_dir = coalesce(get_env("MODULES_DIR", ""), "modules")  # e.g., modules or modules/v1
 
   # Region / env / req
-  region = coalesce(try(local.cfg.aws_region, ""), get_env("AWS_REGION", ""), get_env("AWS_DEFAULT_REGION", ""), "us-east-1")
-  env    = try(local.cfg.environment, "SBX")
-  req    = try(local.cfg.request_id, local.intake_id)
+  region = coalesce(
+    try(local.cfg.aws_region, ""),
+    get_env("AWS_REGION", ""),
+    get_env("AWS_DEFAULT_REGION", ""),
+    "us-east-1"
+  )
+  env = try(local.cfg.environment, "SBX")
+  req = try(local.cfg.request_id, local.intake_id)
 
-  # Tolerant module block lookup ("efs", "AWS efs", "EFS")
+  # Resolve module block (label tolerant)
   mod = try(
     local.cfg.modules[local.component],
     local.cfg.modules["AWS ${local.component}"],
@@ -44,13 +48,13 @@ locals {
   name_env  = lower(local.env)
   name_std  = "${local.name_base}-${local.component}-${local.name_env}"
 
-  # Paths
+  # State prefix (stable)
   state_prefix = "wbd/sandbox/${local.intake_id}"
   rel_up       = local.is_decommission ? "../.." : ".."
 }
 
 terraform {
-  # Dynamic module source (wrapper-friendly + versioned modules)
+  # Dynamic source path (wrapper-friendly + versioned modules)
   source = "${local.infra_root}/${local.modules_dir}/${local.component}"
 }
 
@@ -81,13 +85,13 @@ inputs = {
   name       = local.name_std
   request_id = local.req
 
-  # Tags (module expects common_tags)
+  # Tags (common_tags)
   common_tags = merge(
     try(local.cfg.tags, {}),
     {
       Name        = local.name_std
-      ServiceName = upper(local.component)                   # EFS
-      Service     = "${upper(local.component)}_${local.intake_id}"  # EFS_<intake>
+      ServiceName = upper(local.component)
+      Service     = "${upper(local.component)}_${local.intake_id}"
       Environment = local.env
       RequestID   = local.req
       Requester   = try(local.cfg.requester, "")
