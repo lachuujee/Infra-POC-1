@@ -18,9 +18,10 @@ locals {
   # Component
   component = basename(local.this_dir)  # "s3"
 
-  # Works in personal & office repos
+  # Wrapper-agnostic + versioned modules support
   # .../<infra_root>/live/sandbox/<intake_id>/...
-  infra_root = dirname(dirname(dirname(local.intake_dir)))
+  infra_root  = dirname(dirname(dirname(local.intake_dir)))
+  modules_dir = coalesce(get_env("MODULES_DIR", ""), "modules")  # e.g., modules or modules/v1
 
   # Region / env / req
   region = coalesce(
@@ -50,8 +51,8 @@ locals {
 }
 
 terraform {
-  # Dynamic module source
-  source = "${local.infra_root}/modules/${local.component}"
+  # Dynamic module source (wrapper-friendly + versioned modules)
+  source = "${local.infra_root}/${local.modules_dir}/${local.component}"
 }
 
 remote_state {
