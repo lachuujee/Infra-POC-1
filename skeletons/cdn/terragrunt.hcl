@@ -27,9 +27,14 @@ locals {
   modules_dir = coalesce(get_env("MODULES_DIR", ""), "modules")  # modules or modules/v1
 
   # Region / env / req
-  region = coalesce(try(local.cfg.aws_region, ""), get_env("AWS_REGION", ""), get_env("AWS_DEFAULT_REGION", ""), "us-east-1")
-  env    = try(local.cfg.environment, "SBX")
-  req    = try(local.cfg.request_id, local.intake_id)
+  region = coalesce(
+    try(local.cfg.aws_region, ""),
+    get_env("AWS_REGION", ""),
+    get_env("AWS_DEFAULT_REGION", ""),
+    "us-east-1"
+  )
+  env = try(local.cfg.environment, "SBX")
+  req = try(local.cfg.request_id, local.intake_id)
 
   # Module block tolerant to labels ("cdn", "AWS cdn", "CDN")
   mod = try(
@@ -79,18 +84,18 @@ EOF
 }
 
 inputs = {
-  enabled          = try(local.mod.enabled, false)
+  enabled = try(local.mod.enabled, false)
 
   # Names / ids
-  name             = local.name_std
-  request_id       = local.req
+  name       = local.name_std
+  request_id = local.req
 
   # CDN specifics
   bucket_name      = local.bucket_name
   logs_bucket_name = local.logs_bucket_name
   origin_path      = try(local.mod.origin_path, "/frontend")
 
-  # Tags first
+  # Tags
   common_tags = merge(
     try(local.cfg.tags, {}),
     {
