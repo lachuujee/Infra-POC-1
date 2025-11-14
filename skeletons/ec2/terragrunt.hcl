@@ -6,6 +6,7 @@ dependencies {
 }
 
 locals {
+  # Where we are (works in active and /decommission)
   this_dir        = get_terragrunt_dir()
   parent_dir      = dirname(local.this_dir)
   is_decommission = basename(local.parent_dir) == "decommission"
@@ -14,20 +15,32 @@ locals {
   cfg = jsondecode(file(find_in_parent_folders("inputs.json")))
 
   # Identity
-  component  = basename(local.this_dir)                                   # "ec2"
+  component  = basename(local.this_dir)  # "ec2"
   intake_dir = local.is_decommission ? dirname(local.parent_dir) : local.parent_dir
   intake_id  = basename(local.intake_dir)
 
-  # Repo layout agnostic
-  infra_root = dirname(dirname(dirname(local.intake_dir)))                # .../<infra_root>/live/sandbox/<intake_id>/
+  # Repo layout + versioned modules support
+  # .../<infra_root>/live/sandbox/<intake_id>/...
+  infra_root  = dirname(dirname(dirname(local.intake_dir)))
+  modules_dir = coalesce(get_env("MODULES_DIR", ""), "modules")  # e.g., modules or modules/v1
 
   # Region / env / req
-  region = coalesce(try(local.cfg.aws_region, ""), get_env("AWS_REGION", ""), get_env("AWS_DEFAULT_REGION", ""), "us-east-1")
-  env    = try(local.cfg.environment, "SBX")
-  req    = try(local.cfg.request_id, local.intake_id)
+  region = coalesce(
+    try(local.cfg.aws_region, ""),
+    get_env("AWS_REGION", ""),
+    get_env("AWS_DEFAULT_REGION", ""),
+    "us-east-1"
+  )
+  env = try(local.cfg.environment, "SBX")
+  req = try(local.cfg.request_id, local.intake_id)
 
-  # Module block tolerant to labels ("ec2", "AWS ec2", "EC2")
-  mod = try(local.cfg.modules[local.component], local.cfg.modules["AWS ${local.component}"], local.cfg.modules[upper(local.component)], {})
+  # Resolve module block tolerant to labels ("ec2", "AWS ec2", "EC2")
+  mod = try(
+    local.cfg.modules[local.component],
+    local.cfg.modules["AWS ${local.component}"],
+    local.cfg.modules[upper(local.component)],
+    {}
+  )
 
   # Uniform Name: sbx_intake_id_001-ec2-dev
   name_base = lower(try(local.cfg.sandbox_name, "${local.env}_${local.req}"))
@@ -40,7 +53,8 @@ locals {
 }
 
 terraform {
-  source = "${local.infra_root}/modules/${local.component}"
+  # Dynamic source path (wrapper-friendly + versioned modules)
+  source = "${local.infra_root}/${local.modules_dir}/${local.component}"
 }
 
 remote_state {
@@ -64,10 +78,13 @@ EOF
 }
 
 inputs = {
+  # Enabled comes from inputs.json
   enabled = try(local.mod.enabled, false)
 
+  # Strict, uniform resource name
   name = local.name_std
 
+  # Tags (uniform)
   tags_extra = merge(
     try(local.cfg.tags, {}),
     {
@@ -81,15 +98,14 @@ inputs = {
     }
   )
 
-  # EC2 specifics
+  # --- EC2 specifics ---
   instance_count    = try(local.mod.instance_count, 1)
   instance_type     = try(local.mod.instance_type, "t2.micro")
   ami_id            = try(local.mod.ami_id, null)
   ami_ssm_parameter = try(local.mod.ami_ssm_parameter, "/aws/service/ami-amazon-linux-latest/amzn2-ami-hvm-x86_64-gp2")
-
   subnet_role_keys  = ["api-a", "api-b"]
 
-  # Remote state pointers consumed by the module
+  # --- State pointers (bottom) ---
   remote_state_bucket = "wbd-tf-state-sandbox"
   remote_state_region = try(local.cfg.state.region, "us-east-1")
   vpc_state_key       = "${local.state_prefix}/vpc/terraform.tfstate"
