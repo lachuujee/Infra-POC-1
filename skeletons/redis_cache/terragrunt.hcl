@@ -100,3 +100,5 @@ inputs = {
   remote_state_region = try(local.cfg.state.region, "us-east-1")
   vpc_state_key       = "${local.state_prefix}/vpc/terraform.tfstate"
 }
+
+# File: terragrunt.hcl (redis_cache)
