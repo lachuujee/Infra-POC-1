@@ -97,4 +97,4 @@ inputs = {
   vpc_state_key       = "${local.state_prefix}/vpc/terraform.tfstate"
 }
 
-# File: terragrunt.hcl (redis_cache)
+# File: terragrunt.hcl (lb)
