@@ -6,7 +6,7 @@ import boto3
 
 # --- Env ---
 SECRET_ARN     = os.environ["SECRET_ARN"]                 # Secrets Manager secret with PAT
-GITHUB_REPO    = os.environ["GITHUB_REPO"]                # e.g. "aicoe/Infra-POC-1"
+GITHUB_REPO    = os.environ["GITHUB_REPO"]                # e.g. "lachuujee/Infra-POC-1"
 DEFAULT_BRANCH = os.environ.get("DEFAULT_BRANCH", "main")
 SKELETONS_ROOT = os.environ.get("SKELETONS_ROOT", "skeletons")
 LIVE_ROOT      = os.environ.get("LIVE_ROOT", "live/sandbox")
