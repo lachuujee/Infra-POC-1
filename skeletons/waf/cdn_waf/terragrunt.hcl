@@ -1,10 +1,5 @@
 # Simple: WAF (CDN) Terragrunt config
 
-# CDN first
-dependencies {
-  paths = ["${local.rel_up}/cdn"]
-}
-
 locals {
   # Where we are
   this_dir        = get_terragrunt_dir()
@@ -24,14 +19,20 @@ locals {
   component_parent = basename(local.parent_dir)        # "waf"
   component_path   = "${local.component_parent}/${local.component}"  # "waf/cdn_waf"
 
-  # Repo layout agnostic
-  infra_root  = dirname(dirname(dirname(local.intake_dir)))     # .../<infra_root>/live/sandbox/<intake_id>/
-  modules_dir = coalesce(get_env("MODULES_DIR", ""), "modules") # supports modules/, modules/v1, modules/v2
+  # Repo layout agnostic + versioned modules support
+  # .../<infra_root>/live/sandbox/<intake_id>/...
+  infra_root  = dirname(dirname(dirname(local.intake_dir)))
+  modules_dir = coalesce(get_env("MODULES_DIR", ""), "modules")  # modules or modules/v1
 
   # Region / env / req
-  region = coalesce(try(local.cfg.aws_region, ""), get_env("AWS_REGION", ""), get_env("AWS_DEFAULT_REGION", ""), "us-east-1")
-  env    = try(local.cfg.environment, "SBX")
-  req    = try(local.cfg.request_id, local.intake_id)
+  region = coalesce(
+    try(local.cfg.aws_region, ""),
+    get_env("AWS_REGION", ""),
+    get_env("AWS_DEFAULT_REGION", ""),
+    "us-east-1"
+  )
+  env = try(local.cfg.environment, "SBX")
+  req = try(local.cfg.request_id, local.intake_id)
 
   # Find module block (flat or nested under "waf")
   mod = try(
@@ -48,9 +49,8 @@ locals {
   name_env  = lower(local.env)
   name_std  = "${local.name_base}-${local.component}-${local.name_env}"
 
-  # Paths
+  # State prefix
   state_prefix = "wbd/sandbox/${local.intake_id}"
-  rel_up       = local.is_decommission ? "../../.." : "../.."   # to intake root from waf/cdn_waf
 }
 
 terraform {
