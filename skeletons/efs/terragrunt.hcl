@@ -1,41 +1,64 @@
-# terragrunt.hcl
+# Simple: EFS Terragrunt config
+
+# VPC first
 dependencies {
-  paths = ["../vpc"]
+  paths = ["${local.rel_up}/vpc"]
 }
 
 locals {
-  cfg       = jsondecode(file(find_in_parent_folders("inputs.json")))
-  region    = coalesce(try(local.cfg.aws_region, ""), get_env("AWS_REGION", ""), get_env("AWS_DEFAULT_REGION", ""), "us-east-1")
-  component = basename(get_terragrunt_dir())
-  intake_id = basename(dirname(get_terragrunt_dir()))
-  env       = try(local.cfg.environment, "SBX")
-  req       = try(local.cfg.request_id, local.intake_id)
-  base      = "${local.env}_${local.req}"
-  name      = try(local.cfg.modules[local.component].name, "${local.base}_efs")
+  # Where we are (active or /decommission)
+  this_dir        = get_terragrunt_dir()
+  parent_dir      = dirname(local.this_dir)
+  is_decommission = basename(local.parent_dir) == "decommission"
 
-  common_tags = merge(
-    try(local.cfg.tags, {}),
-    {
-      Name        = local.name
-      ServiceName = "efs"
-      Service     = "efs_${local.intake_id}"
-      Environment = local.env
-      RequestID   = local.req
-      Requester   = try(local.cfg.requester, "")
-      BU_Unit     = try(local.cfg.bu_unit, "WBD")
-    }
+  # Intake dir/id
+  intake_dir = local.is_decommission ? dirname(local.parent_dir) : local.parent_dir
+  intake_id  = basename(local.intake_dir)
+
+  # Inputs
+  cfg = jsondecode(file(find_in_parent_folders("inputs.json")))
+
+  # Component
+  component = basename(local.this_dir)  # "efs"
+
+  # Wrapper-agnostic + versioned modules
+  # .../<infra_root>/live/sandbox/<intake_id>/...
+  infra_root  = dirname(dirname(dirname(local.intake_dir)))
+  modules_dir = coalesce(get_env("MODULES_DIR", ""), "modules")  # modules or modules/v1
+
+  # Region / env / req
+  region = coalesce(try(local.cfg.aws_region, ""), get_env("AWS_REGION", ""), get_env("AWS_DEFAULT_REGION", ""), "us-east-1")
+  env    = try(local.cfg.environment, "SBX")
+  req    = try(local.cfg.request_id, local.intake_id)
+
+  # Tolerant module block lookup ("efs", "AWS efs", "EFS")
+  mod = try(
+    local.cfg.modules[local.component],
+    local.cfg.modules["AWS ${local.component}"],
+    local.cfg.modules[upper(local.component)],
+    {}
   )
+
+  # Uniform Name: sbx_intake_id_001-efs-dev
+  name_base = lower(try(local.cfg.sandbox_name, "${local.env}_${local.req}"))
+  name_env  = lower(local.env)
+  name_std  = "${local.name_base}-${local.component}-${local.name_env}"
+
+  # Paths
+  state_prefix = "wbd/sandbox/${local.intake_id}"
+  rel_up       = local.is_decommission ? "../.." : ".."
 }
 
 terraform {
-  source = "${get_repo_root()}/modules/${local.component}"
+  # Dynamic module source (wrapper-friendly + versioned modules)
+  source = "${local.infra_root}/${local.modules_dir}/${local.component}"
 }
 
 remote_state {
   backend = "s3"
   config = {
     bucket  = "wbd-tf-state-sandbox"
-    key     = "wbd/sandbox/${local.intake_id}/${local.component}/terraform.tfstate"
+    key     = "${local.state_prefix}/${local.component}/terraform.tfstate"
     region  = try(local.cfg.state.region, "us-east-1")
     encrypt = true
   }
@@ -52,17 +75,35 @@ EOF
 }
 
 inputs = {
-  region               = local.region
-  env                  = local.env
-  name                 = local.name
-  request_id           = local.req
-  common_tags          = local.common_tags
+  # Names / ids
+  region     = local.region
+  env        = local.env
+  name       = local.name_std
+  request_id = local.req
 
-  remote_state_bucket  = "wbd-tf-state-sandbox"
-  remote_state_region  = try(local.cfg.state.region, "us-east-1")
-  vpc_state_key        = "wbd/sandbox/${local.intake_id}/vpc/terraform.tfstate"
+  # Tags (module expects common_tags)
+  common_tags = merge(
+    try(local.cfg.tags, {}),
+    {
+      Name        = local.name_std
+      ServiceName = upper(local.component)                   # EFS
+      Service     = "${upper(local.component)}_${local.intake_id}"  # EFS_<intake>
+      Environment = local.env
+      RequestID   = local.req
+      Requester   = try(local.cfg.requester, "")
+      BU_Unit     = try(local.cfg.bu_unit, "WBD")
+    }
+  )
 
-  availability_zone    = try(local.cfg.modules[local.component].availability_zone, "us-east-1a")
-  subnet_id            = try(local.cfg.modules[local.component].subnet_id, "")
-  allowed_cidr_blocks  = try(local.cfg.modules[local.component].allowed_cidr_blocks, [])
+  # EFS specifics
+  availability_zone   = try(local.mod.availability_zone, "us-east-1a")
+  subnet_id           = try(local.mod.subnet_id, "")
+  allowed_cidr_blocks = try(local.mod.allowed_cidr_blocks, [])
+
+  # --- State pointers at the very bottom ---
+  remote_state_bucket = "wbd-tf-state-sandbox"
+  remote_state_region = try(local.cfg.state.region, "us-east-1")
+  vpc_state_key       = "${local.state_prefix}/vpc/terraform.tfstate"
 }
+
+# File: terragrunt.hcl (efs)
