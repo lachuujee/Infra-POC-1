@@ -19,17 +19,21 @@ locals {
   cfg = jsondecode(file(find_in_parent_folders("inputs.json")))
 
   # Component
-  component = basename(local.this_dir)  # "redis" or "redis_cache"
+  component = basename(local.this_dir)
 
   # Wrapper-agnostic + versioned modules
-  # .../<infra_root>/live/sandbox/<intake_id>/...
   infra_root  = dirname(dirname(dirname(local.intake_dir)))
-  modules_dir = coalesce(get_env("MODULES_DIR", ""), "modules")  # modules or modules/v1
+  modules_dir = coalesce(get_env("MODULES_DIR", ""), "modules")
 
   # Region / env / req
-  region = coalesce(try(local.cfg.aws_region, ""), get_env("AWS_REGION", ""), get_env("AWS_DEFAULT_REGION", ""), "us-east-1")
-  env    = try(local.cfg.environment, "SBX")
-  req    = try(local.cfg.request_id, local.intake_id)
+  region = coalesce(
+    try(local.cfg.aws_region, ""),
+    get_env("AWS_REGION", ""),
+    get_env("AWS_DEFAULT_REGION", ""),
+    "us-east-1"
+  )
+  env = try(local.cfg.environment, "SBX")
+  req = try(local.cfg.request_id, local.intake_id)
 
   # Tolerant module block lookup
   mod = try(
@@ -39,7 +43,7 @@ locals {
     {}
   )
 
-  # Uniform Name: sbx_intake_id_001-redis-dev
+  # Name
   name_base = lower(try(local.cfg.sandbox_name, "${local.env}_${local.req}"))
   name_env  = lower(local.env)
   name_std  = "${local.name_base}-${local.component}-${local.name_env}"
@@ -50,7 +54,6 @@ locals {
 }
 
 terraform {
-  # Dynamic module source (wrapper-friendly + versioned modules)
   source = "${local.infra_root}/${local.modules_dir}/${local.component}"
 }
 
@@ -68,25 +71,17 @@ generate "provider" {
   path      = "provider.tf"
   if_exists = "overwrite_terragrunt"
   contents  = <<EOF
-provider "aws" {
-  region = "${local.region}"
-}
+provider "aws" { region = "${local.region}" }
 EOF
 }
 
 inputs = {
-  # Enabled from inputs.json
-  enabled    = try(local.mod.enabled, false)
+  enabled       = try(local.mod.enabled, false)
+  name          = local.name_std
+  request_id    = local.req
+  region        = local.region
+  cache_engine  = try(local.mod.cache_engine, "redis_oss")
 
-  # Names / ids
-  name       = local.name_std
-  request_id = local.req
-
-  # Module specifics
-  region       = local.region
-  cache_engine = try(local.mod.cache_engine, "redis_oss")
-
-  # Tags
   common_tags = merge(
     try(local.cfg.tags, {}),
     {
@@ -100,10 +95,8 @@ inputs = {
     }
   )
 
-  # --- State pointers at the very bottom ---
+  # --- State pointers (bottom) ---
   remote_state_bucket = "wbd-tf-state-sandbox"
   remote_state_region = try(local.cfg.state.region, "us-east-1")
   vpc_state_key       = "${local.state_prefix}/vpc/terraform.tfstate"
 }
-
-# File: terragrunt.hcl (redis / redis_cache)
