@@ -14,7 +14,7 @@ phases:
       # Fail fast and treat unset vars as errors
       - set -euo pipefail
       # Install basic tools (jq, unzip, curl)
-      - yum -y install jq unzip curl >/dev/null
+      - yum -y install jq unzip >/dev/null
       # Install Terraform binary
       - |
         echo "# Install Terraform"
