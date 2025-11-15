@@ -93,7 +93,7 @@ phases:
         echo "[BUILD] Apply return code: ${APP_RC}"
 
       - |
-        echo "# Fallback: if apply failed and decommission exists → destroy then retry apply once"
+        echo "# Fallback: if apply failed and decommission exists -> destroy then retry apply once"
         DEC_PRESENT=false
         if [[ -d "decommission" ]] && find decommission -type f -name terragrunt.hcl -print -quit | grep -q . ; then
           DEC_PRESENT=true
