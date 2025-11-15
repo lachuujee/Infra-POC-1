@@ -1,96 +1,97 @@
 version: 0.2
+
 env:
-  shell: bash
   variables:
-    EXTERNAL_ID: sandbox-cicd-access   # must match trust policy in workload accounts
+    TF_VERSION: "1.7.5"
+    TG_VERSION: "0.67.6"
+    TG_PARALLELISM: "10"   # tune if needed
 
 phases:
   install:
-    runtime-versions:
-      python: 3.11
     commands:
       - set -euo pipefail
-      - echo "[INFO] Installing prerequisites"
-      - |
-        if command -v apt-get >/dev/null; then
-          apt-get update -y >/dev/null
-          apt-get install -y jq unzip curl >/dev/null
-        else
-          yum -y install jq unzip curl >/dev/null
-        fi
-      # Terraform
-      - |
-        if ! command -v terraform >/dev/null; then
-          TF_VERSION=1.8.7
-          curl -sSL -o /tmp/terraform.zip https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip
-          unzip -o /tmp/terraform.zip -d /usr/local/bin >/dev/null
-        fi
-      # Terragrunt
-      - |
-        if ! command -v terragrunt >/dev/null; then
-          TG_VERSION=0.67.14
-          curl -sSL -o /usr/local/bin/terragrunt https://github.com/gruntwork-io/terragrunt/releases/download/v${TG_VERSION}/terragrunt_linux_amd64
-          chmod +x /usr/local/bin/terragrunt
-        fi
-      - terraform -version && terragrunt -version
-
+      - echo "[INSTALL] Using region: ${AWS_DEFAULT_REGION}"
+      - echo "[INSTALL] Installing unzip..."
+      - yum -y install unzip >/dev/null
+      - echo "[INSTALL] Installing Terraform ${TF_VERSION}..."
+      - curl -fsSL -o /tmp/tf.zip https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip
+      - unzip -o /tmp/tf.zip -d /usr/local/bin >/dev/null
+      - terraform -version
+      - echo "[INSTALL] Installing Terragrunt v${TG_VERSION}..."
+      - curl -fsSL -o /usr/local/bin/terragrunt https://github.com/gruntwork-io/terragrunt/releases/download/v${TG_VERSION}/terragrunt_linux_amd64
+      - chmod +x /usr/local/bin/terragrunt
+      - terragrunt -version
+      - echo "[INSTALL] Installing jq..."
+      - yum -y install jq >/dev/null
   pre_build:
     commands:
-      - echo "[INFO] Resolving intake directory"
-      - REPO_DIR="${CODEBUILD_SRC_DIR:-.}"; cd "$REPO_DIR"
-      # Prefer pipeline/Lambda override; else derive from the triggering commit (requires Source: Full clone)
+      - echo "[PRE] Locating latest intake folder under live/sandbox..."
       - |
-        if [[ -n "${INTAKE_DIR:-}" ]]; then
-          echo "[INFO] Using passed INTAKE_DIR=$INTAKE_DIR"
+        cd "$CODEBUILD_SRC_DIR"
+        ls -la
+        INTAKE_DIR="$(ls -1d live/sandbox/intake_id_* 2>/dev/null | sort -V | tail -n1 || true)"
+        if [ -z "${INTAKE_DIR}" ]; then
+          echo "[ERROR] No live/sandbox/intake_id_* directory found in repo." >&2
+          exit 1
+        fi
+        echo "[PRE] Selected intake dir: ${INTAKE_DIR}"
+        JSON_PATH="${INTAKE_DIR}/inputs.json"
+        if [ ! -f "${JSON_PATH}" ]; then
+          echo "[ERROR] inputs.json not found at ${JSON_PATH}" >&2
+          exit 1
+        fi
+        echo "[PRE] inputs.json:"
+        cat "${JSON_PATH}" | jq .
+      - |
+        echo "[PRE] Extracting destination assume role (assume_role_arn || iam_role)..."
+        ROLE_ARN="$(jq -r '.assume_role_arn // .iam_role // empty' "${JSON_PATH}")"
+        if [ -n "${ROLE_ARN}" ]; then
+          echo "[PRE] Assuming role: ${ROLE_ARN}"
+          CREDS_JSON="$(aws sts assume-role --role-arn "${ROLE_ARN}" --role-session-name SandboxProvision --output json)"
+          export AWS_ACCESS_KEY_ID="$(echo "${CREDS_JSON}" | jq -r .Credentials.AccessKeyId)"
+          export AWS_SECRET_ACCESS_KEY="$(echo "${CREDS_JSON}" | jq -r .Credentials.SecretAccessKey)"
+          export AWS_SESSION_TOKEN="$(echo "${CREDS_JSON}" | jq -r .Credentials.SessionToken)"
+          aws sts get-caller-identity --query Arn --output text
         else
-          INTAKE_DIR="$(git log -1 --name-only --pretty=format: | grep -E '^live/sandbox/intake_' | cut -d/ -f1-3 | sort -u | head -1 || true)"
+          echo "[PRE] No role provided in inputs.json; using current credentials."
         fi
-      - |
-        if [[ -z "${INTAKE_DIR:-}" || ! -d "$INTAKE_DIR" ]]; then
-          echo "[ERROR] Could not resolve INTAKE_DIR (expected live/sandbox/intake_xxx)"; exit 1
-        fi
-      - echo "[INFO] INTAKE_DIR=$INTAKE_DIR"
-      - JSON_PATH="$INTAKE_DIR/inputs.json"
-      - |
-        if [[ ! -f "$JSON_PATH" ]]; then
-          echo "[ERROR] inputs.json not found at $JSON_PATH"; ls -R "$INTAKE_DIR"; exit 1
-        fi
-      - REGION="$(jq -r '.region // .aws_region // env.AWS_REGION // "us-east-1"' "$JSON_PATH")"; export AWS_DEFAULT_REGION="$REGION"
-      - ROLE_ARN="$(jq -r '.assume_role_arn // .iam_role // empty' "$JSON_PATH")"
-      - REQUEST_ID="$(jq -r '.request_id // env.CODEBUILD_BUILD_ID' "$JSON_PATH")"
-      - IS_MOD="$(jq -r '.is_modified // false' "$JSON_PATH")"
-      - IS_DECOM="$(jq -r '.is_decommissioned // false' "$JSON_PATH")"
-      - |
-        if [[ -z "$ROLE_ARN" || "$ROLE_ARN" == "null" ]]; then
-          echo "[ERROR] Role ARN missing (.assume_role_arn/.iam_role)"; exit 1
-        fi
-      - echo "[INFO] Assuming role: $ROLE_ARN"
-      - CREDS_JSON="$(aws sts assume-role --role-arn "$ROLE_ARN" --role-session-name "tg-${REQUEST_ID}" ${EXTERNAL_ID:+--external-id "$EXTERNAL_ID"} --duration-seconds 3600)"
-      - export AWS_ACCESS_KEY_ID="$(jq -r '.Credentials.AccessKeyId' <<<"$CREDS_JSON")"
-      - export AWS_SECRET_ACCESS_KEY="$(jq -r '.Credentials.SecretAccessKey' <<<"$CREDS_JSON")"
-      - export AWS_SESSION_TOKEN="$(jq -r '.Credentials.SessionToken' <<<"$CREDS_JSON")"
-      - aws sts get-caller-identity --query Arn --output text
-
   build:
     commands:
-      - echo "[INFO] Running Terragrunt from $INTAKE_DIR in $AWS_DEFAULT_REGION"
-      - cd "$INTAKE_DIR"
-      - export TERRAGRUNT_NON_INTERACTIVE=true
-      - export TG_PARALLELISM="${TG_PARALLELISM:-6}"
-      # Decommission path
+      - echo "[BUILD] Starting APPLY from ${INTAKE_DIR} (excluding versions/ and decommission/)..."
       - |
-        if [[ "$IS_DECOM" == "true" ]]; then
-          echo "[INFO] is_decommissioned=true → destroying stack"
-          terragrunt run-all destroy -auto-approve --terragrunt-parallelism "$TG_PARALLELISM"
-          exit 0
-        fi
-      # Modified path (simple apply; fine for adds/changes)
+        cd "${INTAKE_DIR}"
+        # Init (idempotent) to avoid first-run backend prompts
+        terragrunt run-all init -reconfigure --terragrunt-non-interactive --terragrunt-parallelism ${TG_PARALLELISM} || true
+        terragrunt run-all apply \
+          --terragrunt-non-interactive \
+          --terragrunt-parallelism ${TG_PARALLELISM} \
+          --terragrunt-exclude-dir versions \
+          --terragrunt-exclude-dir decommission \
+          -auto-approve
       - |
-        if [[ "$IS_MOD" == "true" ]]; then
-          echo "[INFO] is_modified=true → applying updates"
+        echo "[BUILD] Checking for decommission modules..."
+        if [ -d "decommission" ] && find decommission -type f -name terragrunt.hcl -print -quit | grep -q . ; then
+          echo "[BUILD] decommission/ found with modules. Running DESTROY inside decommission/..."
+          cd decommission
+          terragrunt run-all init -reconfigure --terragrunt-non-interactive --terragrunt-parallelism ${TG_PARALLELISM} || true
+          terragrunt run-all destroy \
+            --terragrunt-non-interactive \
+            --terragrunt-parallelism ${TG_PARALLELISM} \
+            -auto-approve
+          cd ..
+        else
+          echo "[BUILD] No decommission work detected. Skipping destroy."
         fi
-      - terragrunt run-all apply -auto-approve --terragrunt-parallelism "$TG_PARALLELISM"
-
   post_build:
     commands:
-      - echo "[INFO] Completed: $INTAKE_DIR"
+      - |
+        echo "[POST] Writing build status artifact..."
+        mkdir -p build-status
+        cat > build-status/result.json <<'JSON'
+        { "status": "success", "message": "Apply (and optional decommission destroy) completed" }
+        JSON
+artifacts:
+  files:
+    - build-status/result.json
+  name: BuildArtifact
+  discard-paths: yes
