@@ -55,15 +55,16 @@ terraform {
   source = "${local.infra_root}/${local.modules_dir}/${local.component}"
 }
 
-remote_state {
-  backend = "s3"
-  config = {
-    bucket  = "wbd-tf-state-sandbox"
-    key     = "${local.state_prefix}/${local.component}/terraform.tfstate"
-    region  = try(local.cfg.state.region, "us-east-1")
-    encrypt = true
-  }
-}
+# TEMP: disable remote state backend for debugging
+# remote_state {
+#   backend = "s3"
+#   config = {
+#     bucket  = "wbd-tf-state-sandbox"
+#     key     = "${local.state_prefix}/${local.component}/terraform.tfstate"
+#     region  = try(local.cfg.state.region, "us-east-1")
+#     encrypt = true
+#   }
+# }
 
 generate "provider" {
   path      = "provider.tf"
