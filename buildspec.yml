@@ -47,7 +47,7 @@ phases:
         chmod +x /usr/local/bin/terragrunt
         echo "[INFO] ✅ Terragrunt installed at $(command -v terragrunt)"
 
-      # Verify dependencies (same as what your teammate had, but now they actually exist)
+      # Verify dependencies
       - echo "[INFO] 🔧 Verifying dependencies......"
       - terraform --version
       - terragrunt --version
@@ -59,16 +59,18 @@ phases:
 
   pre_build:
     commands:
-      - echo "[INFO] 🔍 Detecting latest INTAKE_ID in Sandbox-Infra/live/sandbox..."
-      - cd Sandbox-Infra/live/sandbox || { echo "[ERROR] ❌ Sandbox-Infra/live/sandbox not found"; exit 1; }
+      - echo "[INFO] 🔍 Detecting latest intake in live/sandbox..."
+      - cd live/sandbox || { echo "[ERROR] ❌ live/sandbox not found"; exit 1; }
       - echo "[DEBUG] Listing sandbox directory structure (top 50 lines):"
       - ls -R | head -50
-      # Detect latest INTAKE_ID folder
+
+      # Detect latest intake_id_XXX folder (all lowercase)
       - >
-        INTAKE_ID=$(find . -maxdepth 1 -type d -printf '%f\n' | grep -E '^INTAKE_ID_' | sort -V | tail -n1) &&
-        [ -n "$INTAKE_ID" ] || { echo "[ERROR] ❌ No INTAKE_ID_* directory found!"; exit 1; }
-      - echo "[INFO] ✅ Detected latest INTAKE_ID:" $INTAKE_ID
+        INTAKE_ID=$(find . -maxdepth 1 -type d -printf '%f\n' | grep -E '^intake_id_' | sort -V | tail -n1) &&
+        [ -n "$INTAKE_ID" ] || { echo "[ERROR] ❌ No intake_id_* directory found!"; exit 1; }
+      - echo "[INFO] ✅ Detected latest intake directory:" $INTAKE_ID
       - export INTAKE_ID
+
       # Detect inputs.json
       - JSON_PATH="./$INTAKE_ID/inputs.json"
       - if [ ! -f "$JSON_PATH" ]; then
