@@ -1,26 +1,24 @@
-# File: live/sandbox/<intake_id>/s3/terragrunt.hcl
+# Simple: S3 Terragrunt config (modules/s3, old working pattern)
 
 locals {
-  # Where we are (works in active and /decommission)
-  this_dir        = get_terragrunt_dir()
-  parent_dir      = dirname(local.this_dir)
-  is_decommission = basename(local.parent_dir) == "decommission"
+  # Where this terragrunt.hcl lives
+  this_dir   = get_terragrunt_dir()
+  parent_dir = dirname(local.this_dir)
 
-  # Intake dir/id (root of the intake)
-  intake_dir = local.is_decommission ? dirname(local.parent_dir) : local.parent_dir
+  # Intake folder: live/sandbox/intake_id_001
+  intake_dir = parent_dir
   intake_id  = basename(local.intake_dir)
 
-  # Load inputs.json from the intake root
+  # Load inputs.json from intake root
   cfg = jsondecode(file("${local.intake_dir}/inputs.json"))
 
   # Component name ("s3")
   component = basename(local.this_dir)
 
-  # Infra root: .../<repo_root>/live/sandbox/<intake_id>/s3
-  infra_root  = dirname(dirname(dirname(local.intake_dir)))
-  modules_dir = get_env("MODULES_DIR", "modules") # e.g. "modules" or "modules/v1"
+  # Repo root: …/<repo_root>
+  infra_root = get_repo_root()
 
-  # Region / env / request id
+  # Region: inputs.json → env → default
   region = coalesce(
     try(local.cfg.aws_region, ""),
     get_env("AWS_REGION", ""),
@@ -28,7 +26,8 @@ locals {
     "us-east-1"
   )
 
-  env = try(local.cfg.environment, "SBX")
+  # Env / request id
+  env = try(local.cfg.environment, "sbx")
   req = try(local.cfg.request_id, local.intake_id)
 
   # Module block from inputs.json (supports "s3", "AWS s3", "S3")
@@ -39,29 +38,36 @@ locals {
     {}
   )
 
-  # Dynamic enable flag (from inputs.json)
+  # Enable flag (default false so nothing runs if not set)
   enabled = try(local.mod.enabled, false)
 
-  # Uniform name: sbx_intake_id_001-s3-dev
+  # Name from inputs.json or derived
+  mod_name = try(local.mod.name, "${local.intake_id}-${local.component}")
+
+  # Canonical name for resources / tags
   name_base = lower(try(local.cfg.sandbox_name, "${local.env}_${local.req}"))
   name_env  = lower(local.env)
   name_std  = "${local.name_base}-${local.component}-${local.name_env}"
 
-  # State prefix for remote state
+  # Bucket name override: clean + DNS safe
+  bucket_name_override_raw = try(local.mod.name, local.name_std)
+  bucket_name_override     = replace(lower(bucket_name_override_raw), "_", "-")
+
+  # State prefix
   state_prefix = "wbd/sandbox/${local.intake_id}"
 }
 
 terraform {
-  # Dynamic module source (MODULES_DIR can be "modules" or "modules/v1")
-  source = "${local.infra_root}/${local.modules_dir}/${local.component}"
+  # EXACTLY like your old working version – local path under repo root
+  source = "${local.infra_root}/modules/${local.component}"
 }
 
 remote_state {
   backend = "s3"
   config = {
-    bucket  = "wbd-tf-state-sandbox" # change if your state bucket name is different
+    bucket  = "wbd-tf-state-sandbox"  # change only the bucket name if needed
     key     = "${local.state_prefix}/${local.component}/terraform.tfstate"
-    region  = try(local.cfg.state.region, "us-east-1")
+    region  = local.region
     encrypt = true
   }
 }
@@ -72,38 +78,42 @@ generate "provider" {
   contents  = <<EOF
 provider "aws" {
   region = "${local.region}"
+
+  # Assume destination role from inputs.json (iam_role)
+  assume_role {
+    role_arn     = "${try(local.cfg.iam_role, "")}"
+    session_name = "SandboxProvisioningSession"
+  }
 }
 EOF
 }
 
 inputs = {
-  # Passed into the Terraform S3 module
-  enabled     = local.enabled
+  # module expects region
+  region      = local.region
 
-  # Names
+  # from inputs.json / locals
+  enabled     = local.enabled
   name        = local.name_std
   request_id  = try(local.cfg.request_id, "")
+  bucket_name_override = local.bucket_name_override
 
-  # S3-specific
-  region               = local.region
-  bucket_name_override = replace(lower(local.name_std), "_", "-")
-
+  # defaults
   versioning    = true
   block_public  = true
   force_destroy = false
-  kms_key_id    = null
+  kms_key_id    = null   # AWS-managed KMS
 
-  # Tags
+  # cost/reporting tags
   tags_extra = merge(
     try(local.cfg.tags, {}),
     {
-      Name        = local.name_std
-      ServiceName = upper(local.component)
-      Service     = "${upper(local.component)}_${local.intake_id}"
+      RequestID   = try(local.cfg.request_id, "")
       Environment = local.env
-      RequestID   = local.req
-      Requester   = try(local.cfg.requester, "")
-      BU_Unit     = try(local.cfg.bu_unit, "WBD")
+      IntakeID    = local.intake_id
+      ServiceName = upper(local.component)                       # S3
+      Service     = "${upper(local.component)}_${local.intake_id}" # S3_intake_id_001
+      BU_Unit     = try(local.cfg.bu_unit, "WBD_sandbox")
     }
   )
 }
