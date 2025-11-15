@@ -58,7 +58,7 @@ terraform {
 remote_state {
   backend = "s3"
   config = {
-    bucket  = "wbd-tf-state-sandbox-poc"
+    bucket  = "wbd-tf-state-sandbox"
     key     = "${local.state_prefix}/${local.component}/terraform.tfstate"
     region  = try(local.cfg.state.region, "us-east-1")
     encrypt = true
