@@ -1,39 +1,52 @@
-# -----------------------
-# S3 Terragrunt component
-# -----------------------
+# Simple: S3 Terragrunt config
+
+# (No explicit dependencies for S3)
 
 locals {
-  # Where we are
-  this_dir    = get_terragrunt_dir()
-  parent_dir  = dirname(local.this_dir)
+  # Where we are (works in active and /decommission)
+  this_dir        = get_terragrunt_dir()
+  parent_dir      = dirname(local.this_dir)
+  is_decommission = basename(local.parent_dir) == "decommission"
 
-  # Intake dir / id
-  intake_dir  = dirname(local.parent_dir)
-  intake_id   = basename(local.intake_dir)
+  # Intake dir/id
+  intake_dir = local.is_decommission ? dirname(local.parent_dir) : local.parent_dir
+  intake_id  = basename(local.intake_dir)
 
-  # Load inputs (from live/<intake_id>/inputs.json)
-  cfg         = jsondecode(file(find_in_parent_folders("inputs.json")))
+  # Load inputs
+  cfg = jsondecode(file(find_in_parent_folders("inputs.json")))
 
-  # Component name (folder name, e.g., "s3")
-  component   = basename(local.this_dir)
+  # Component
+  component = basename(local.this_dir)  # "s3"
 
-  # Repo root and modules dir (env override: MODULES_DIR; default modules/v1)
-  infra_root  = dirname(dirname(local.intake_dir))
-  modules_dir = coalesce(get_env("MODULES_DIR", ""), "modules/v1")
+  # Wrapper-agnostic + versioned modules support
+  # .../<infra_root>/live/sandbox/<intake_id>/...
+  infra_root  = dirname(dirname(dirname(local.intake_dir)))
+  modules_dir = coalesce(get_env("MODULES_DIR", ""), "modules")  # e.g., modules or modules/v1
 
-  # Region
-  region      = coalesce(
-                  try(local.cfg.aws_region, null),
-                  get_env("AWS_REGION", null),
-                  get_env("AWS_DEFAULT_REGION", null),
-                  "us-east-1"
-                )
+  # Region / env / req
+  region = coalesce(
+    try(local.cfg.aws_region, ""),
+    get_env("AWS_REGION", ""),
+    get_env("AWS_DEFAULT_REGION", ""),
+    "us-east-1"
+  )
+  env = try(local.cfg.environment, "SBX")
+  req = try(local.cfg.request_id, local.intake_id)
 
-  # Uniform name pieces (optional)
-  env         = try(local.cfg.environment, "SBX")
-  req         = try(local.cfg.request_id, local.intake_id)
+  # Module block tolerant to labels ("s3", "AWS s3", "S3")
+  mod = try(
+    local.cfg.modules[local.component],
+    local.cfg.modules["AWS ${local.component}"],
+    local.cfg.modules[upper(local.component)],
+    {}
+  )
 
-  # State key prefix per intake
+  # Uniform Name: sbx_intake_id_001-s3-dev
+  name_base = lower(try(local.cfg.sandbox_name, "${local.env}_${local.req}"))
+  name_env  = lower(local.env)
+  name_std  = "${local.name_base}-${local.component}-${local.name_env}"
+
+  # State prefix
   state_prefix = "wbd/sandbox/${local.intake_id}"
 }
 
@@ -45,14 +58,13 @@ terraform {
 remote_state {
   backend = "s3"
   config = {
-    bucket = "wbd-tf-state-sandbox-poc"
-    key    = "${local.state_prefix}/${local.component}/terraform.tfstate"
-    region = try(local.cfg.state.region, local.region)
+    bucket  = "wbd-tf-state-sandbox-poc"
+    key     = "${local.state_prefix}/${local.component}/terraform.tfstate"
+    region  = try(local.cfg.state.region, "us-east-1")
     encrypt = true
   }
 }
 
-# Force Terraform to assume the deploy role for ALL AWS calls (incl. S3 state)
 generate "provider" {
   path      = "provider.tf"
   if_exists = "overwrite_terragrunt"
@@ -67,12 +79,36 @@ provider "aws" {
 EOF
 }
 
-# Pass variables to the underlying module (kept lean; module will read what it needs)
 inputs = {
-  enabled            = try(local.cfg.mod.enabled, true)
-  region             = local.region
-  name               = try(local.cfg.name, local.component)
-  request_id         = local.req
-  tags               = try(local.cfg.tags, {})
-  bucket_name_override = try(local.cfg.bucket_name_override, null)
+  # Enabled from inputs.json
+  enabled     = try(local.mod.enabled, true)
+
+  # Names
+  name        = local.name_std
+  request_id  = try(local.cfg.request_id, "")
+
+  # S3-specific
+  region               = local.region
+  bucket_name_override = replace(lower(local.name_std), "_", "-")
+
+  versioning    = true
+  block_public  = true
+  force_destroy = false
+  kms_key_id    = null
+
+  # Tags
+  tags_extra = merge(
+    try(local.cfg.tags, {}),
+    {
+      Name        = local.name_std
+      ServiceName = upper(local.component)
+      Service     = "${upper(local.component)}_${local.intake_id}"
+      Environment = local.env
+      RequestID   = local.req
+      Requester   = try(local.cfg.requester, "")
+      BU_Unit     = try(local.cfg.bu_unit, "WBD")
+    }
+  )
 }
+
+# File: terragrunt.hcl (s3)
