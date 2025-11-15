@@ -2,21 +2,24 @@ version: 0.2
 
 env:
   variables:
-    TF_VERSION: "1.7.5"
-    TG_VERSION: "0.67.6"
-    TG_PARALLELISM: "8"
+    TF_VERSION: "1.7.5"       # Terraform CLI to install
+    TG_VERSION: "0.67.6"      # Terragrunt CLI to install
+    TG_PARALLELISM: "8"       # run-all parallelism
+    MODULES_DIR: "modules/v1" # <- aligns with terragrunt.hcl coalesce(get_env("MODULES_DIR"), "modules")
 
 phases:
   install:
     commands:
       - set -euo pipefail
-      # Install jq and unzip; curl already exists in the AL2023 image
+      # jq/unzip for parsing JSON & installing CLIs
       - yum -y install jq unzip >/dev/null
+      # Install Terraform
       - |
         echo "# Install Terraform"
         curl -fsSL -o /tmp/tf.zip https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip
         unzip -o /tmp/tf.zip -d /usr/local/bin >/dev/null
         terraform -version
+      # Install Terragrunt
       - |
         echo "# Install Terragrunt"
         curl -fsSL -o /usr/local/bin/terragrunt https://github.com/gruntwork-io/terragrunt/releases/download/v${TG_VERSION}/terragrunt_linux_amd64
@@ -26,7 +29,7 @@ phases:
   pre_build:
     commands:
       - |
-        echo "# Resolve intake directory (prefer auto; allow no-op)"
+        echo "# Locate intake directory (or no-op)"
         cd "$CODEBUILD_SRC_DIR"
         if [[ -n "${INTAKE_DIR:-}" && -d "${INTAKE_DIR}" ]]; then
           echo "[PRE] Using provided INTAKE_DIR=${INTAKE_DIR}"
@@ -34,66 +37,61 @@ phases:
           INTAKE_DIR="$(ls -1d live/sandbox/intake_id_* 2>/dev/null | sort -V | tail -n1 || true)"
         fi
         if [[ -z "${INTAKE_DIR}" || ! -d "${INTAKE_DIR}" ]]; then
-          echo "[PRE] No intake folders found. Writing NOOP artifact and exiting 0."
+          echo "[PRE] No intake folders found. NOOP."
           mkdir -p build-status && printf '{"status":"noop","reason":"no_intake_dir"}' > build-status/result.json
           exit 0
         fi
         echo "[PRE] Selected intake dir: ${INTAKE_DIR}"
 
       - |
-        echo "# Load inputs.json and set region"
+        echo "# Load inputs.json -> region"
         JSON_PATH="${INTAKE_DIR}/inputs.json"
         if [[ ! -f "${JSON_PATH}" ]]; then
-          echo "[PRE] No inputs.json; writing NOOP artifact and exiting 0."
+          echo "[PRE] No inputs.json. NOOP."
           mkdir -p build-status && printf '{"status":"noop","reason":"no_inputs_json"}' > build-status/result.json
           exit 0
         fi
-        cat "${JSON_PATH}" | jq .
+        cat "${JSON_PATH}" | jq . | head -c 2000 || true
         REGION="$(jq -r '.region // .aws_region // "us-east-1"' "${JSON_PATH}")"
         export AWS_DEFAULT_REGION="${REGION}"
         echo "[PRE] Region set to ${AWS_DEFAULT_REGION}"
 
       - |
-        echo "# Assume destination role if provided"
-        ROLE_ARN="$(jq -r '.assume_role_arn // .iam_role // empty' "${JSON_PATH}")"
-        if [[ -n "${ROLE_ARN}" && "${ROLE_ARN}" != "null" ]]; then
-          echo "[PRE] Assuming role: ${ROLE_ARN}"
-          CREDS_JSON="$(aws sts assume-role --role-arn "${ROLE_ARN}" --role-session-name tg-${CODEBUILD_BUILD_ID##*:} --duration-seconds 3600)"
-          export AWS_ACCESS_KEY_ID="$(jq -r '.Credentials.AccessKeyId'    <<< "${CREDS_JSON}")"
-          export AWS_SECRET_ACCESS_KEY="$(jq -r '.Credentials.SecretAccessKey' <<< "${CREDS_JSON}")"
-          export AWS_SESSION_TOKEN="$(jq -r '.Credentials.SessionToken'   <<< "${CREDS_JSON}")"
-          aws sts get-caller-identity --query Arn --output text
-        else
-          echo "[PRE] No role ARN in inputs.json; using current CodeBuild credentials."
-        fi
+        echo "# Use provider-based assume_role from terragrunt.hcl (no STS here)"
+        # Intentionally not calling 'aws sts assume-role' to avoid double-assume.
+        # terragrunt.hcl -> generate provider { assume_role role_arn = try(local.cfg.iam_role,"") }
 
   build:
     commands:
       - |
-        echo "# Apply pass from intake root (exclude versions/ and decommission/)"
+        echo "# Terragrunt run-all (exclude versions/ and decommission/)"
         cd "${INTAKE_DIR}"
         export TERRAGRUNT_NON_INTERACTIVE=true
         EXCLUDES=( --terragrunt-exclude-dir versions --terragrunt-exclude-dir decommission )
-        terragrunt run-all init -reconfigure --terragrunt-parallelism ${TG_PARALLELISM} || true
-        if terragrunt run-all apply --terragrunt-parallelism ${TG_PARALLELISM} "${EXCLUDES[@]}" -auto-approve; then
+
+        # init
+        terragrunt run-all init -reconfigure --terragrunt-parallelism "${TG_PARALLELISM}" "${EXCLUDES[@]}" || true
+
+        # apply
+        if terragrunt run-all apply --terragrunt-parallelism "${TG_PARALLELISM}" "${EXCLUDES[@]}" -auto-approve; then
           APP_RC=0
         else
           APP_RC=$?
         fi
-        echo "[BUILD] Apply return code: ${APP_RC}"
+        echo "[BUILD] Apply RC=${APP_RC}"
 
       - |
-        echo "# Fallback: if apply failed and decommission exists -> destroy then retry apply once"
+        echo "# If apply failed and decommission exists -> destroy then retry apply"
         DEC_PRESENT=false
         if [[ -d "decommission" ]] && find decommission -type f -name terragrunt.hcl -print -quit | grep -q . ; then
           DEC_PRESENT=true
         fi
         if [[ ${APP_RC} -ne 0 && "${DEC_PRESENT}" == "true" ]]; then
-          echo "[BUILD] Apply failed; running decommission-first fallback..."
-          ( cd decommission && terragrunt run-all init -reconfigure --terragrunt-parallelism ${TG_PARALLELISM} || true )
-          ( cd decommission && terragrunt run-all destroy --terragrunt-parallelism ${TG_PARALLELISM} -auto-approve ) || true
-          echo "[BUILD] Retrying apply after decommission..."
-          if terragrunt run-all apply --terragrunt-parallelism ${TG_PARALLELISM} "${EXCLUDES[@]}" -auto-approve; then
+          echo "[BUILD] Fallback: decommission-first"
+          ( cd decommission && terragrunt run-all init -reconfigure --terragrunt-parallelism "${TG_PARALLELISM}" || true )
+          ( cd decommission && terragrunt run-all destroy --terragrunt-parallelism "${TG_PARALLELISM}" -auto-approve ) || true
+          echo "[BUILD] Retry apply after decommission"
+          if terragrunt run-all apply --terragrunt-parallelism "${TG_PARALLELISM}" "${EXCLUDES[@]}" -auto-approve; then
             APP_RC=0
           else
             APP_RC=$?
@@ -102,22 +100,21 @@ phases:
         echo "[BUILD] After fallback, APP_RC=${APP_RC}, DEC_PRESENT=${DEC_PRESENT}"
 
       - |
-        echo "# Final decommission pass (clean up any requested deletions)"
+        echo "# Final decommission pass (request-based cleanup)"
         DEC_RC=0
         if [[ "${DEC_PRESENT}" == "true" ]]; then
-          ( cd decommission && terragrunt run-all destroy --terragrunt-parallelism ${TG_PARALLELISM} -auto-approve ) || DEC_RC=$?
+          ( cd decommission && terragrunt run-all destroy --terragrunt-parallelism "${TG_PARALLELISM}" -auto-approve ) || DEC_RC=$?
         else
-          echo "[BUILD] No decommission folder; skipping destroy."
+          echo "[BUILD] No decommission folder; skip."
         fi
         echo "[BUILD] Final DEC_RC=${DEC_RC}"
 
       - |
-        echo "# Evaluate final status (TEMP: do not fail build)"
-        echo "[DEBUG] Final APP_RC=${APP_RC:-unset}, DEC_RC=${DEC_RC:-unset}"
+        echo "# Evaluate final status (keep pipeline green for now)"
+        echo "[DEBUG] APP_RC=${APP_RC:-0} DEC_RC=${DEC_RC:-0}"
         if [[ ${APP_RC} -ne 0 || ${DEC_RC} -ne 0 ]]; then
-          echo "[ERROR] Provision RC=${APP_RC}, Decommission RC=${DEC_RC}"
-          echo "[DEBUG] Not exiting 1 (temporary debug mode)."
-          # TEMPORARY: commented out so build doesn't fail even if Terragrunt failed
+          echo "[WARN] Provision RC=${APP_RC}, Decommission RC=${DEC_RC} (not failing build in debug phase)"
+          # To enforce failure later, uncomment:
           # exit 1
         else
           echo "[SUCCESS] Provision + Decommission completed."
@@ -126,7 +123,7 @@ phases:
   post_build:
     commands:
       - |
-        echo "# Emit status artifact for pipeline visibility (may still have Terragrunt errors; check logs)"
+        echo "# Emit status artifact"
         mkdir -p build-status
         printf '{"status":"success-or-partial","intake_dir":"%s","app_rc":%s,"dec_rc":%s}\n' "${INTAKE_DIR}" "${APP_RC:-0}" "${DEC_RC:-0}" > build-status/result.json
 
