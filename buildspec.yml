@@ -1,0 +1,96 @@
+version: 0.2
+env:
+  shell: bash
+  variables:
+    EXTERNAL_ID: sandbox-cicd-access   # must match trust policy in workload accounts
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.11
+    commands:
+      - set -euo pipefail
+      - echo "[INFO] Installing prerequisites"
+      - |
+        if command -v apt-get >/dev/null; then
+          apt-get update -y >/dev/null
+          apt-get install -y jq unzip curl >/dev/null
+        else
+          yum -y install jq unzip curl >/dev/null
+        fi
+      # Terraform
+      - |
+        if ! command -v terraform >/dev/null; then
+          TF_VERSION=1.8.7
+          curl -sSL -o /tmp/terraform.zip https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip
+          unzip -o /tmp/terraform.zip -d /usr/local/bin >/dev/null
+        fi
+      # Terragrunt
+      - |
+        if ! command -v terragrunt >/dev/null; then
+          TG_VERSION=0.67.14
+          curl -sSL -o /usr/local/bin/terragrunt https://github.com/gruntwork-io/terragrunt/releases/download/v${TG_VERSION}/terragrunt_linux_amd64
+          chmod +x /usr/local/bin/terragrunt
+        fi
+      - terraform -version && terragrunt -version
+
+  pre_build:
+    commands:
+      - echo "[INFO] Resolving intake directory"
+      - REPO_DIR="${CODEBUILD_SRC_DIR:-.}"; cd "$REPO_DIR"
+      # Prefer pipeline/Lambda override; else derive from the triggering commit (requires Source: Full clone)
+      - |
+        if [[ -n "${INTAKE_DIR:-}" ]]; then
+          echo "[INFO] Using passed INTAKE_DIR=$INTAKE_DIR"
+        else
+          INTAKE_DIR="$(git log -1 --name-only --pretty=format: | grep -E '^live/sandbox/intake_' | cut -d/ -f1-3 | sort -u | head -1 || true)"
+        fi
+      - |
+        if [[ -z "${INTAKE_DIR:-}" || ! -d "$INTAKE_DIR" ]]; then
+          echo "[ERROR] Could not resolve INTAKE_DIR (expected live/sandbox/intake_xxx)"; exit 1
+        fi
+      - echo "[INFO] INTAKE_DIR=$INTAKE_DIR"
+      - JSON_PATH="$INTAKE_DIR/inputs.json"
+      - |
+        if [[ ! -f "$JSON_PATH" ]]; then
+          echo "[ERROR] inputs.json not found at $JSON_PATH"; ls -R "$INTAKE_DIR"; exit 1
+        fi
+      - REGION="$(jq -r '.region // .aws_region // env.AWS_REGION // "us-east-1"' "$JSON_PATH")"; export AWS_DEFAULT_REGION="$REGION"
+      - ROLE_ARN="$(jq -r '.assume_role_arn // .iam_role // empty' "$JSON_PATH")"
+      - REQUEST_ID="$(jq -r '.request_id // env.CODEBUILD_BUILD_ID' "$JSON_PATH")"
+      - IS_MOD="$(jq -r '.is_modified // false' "$JSON_PATH")"
+      - IS_DECOM="$(jq -r '.is_decommissioned // false' "$JSON_PATH")"
+      - |
+        if [[ -z "$ROLE_ARN" || "$ROLE_ARN" == "null" ]]; then
+          echo "[ERROR] Role ARN missing (.assume_role_arn/.iam_role)"; exit 1
+        fi
+      - echo "[INFO] Assuming role: $ROLE_ARN"
+      - CREDS_JSON="$(aws sts assume-role --role-arn "$ROLE_ARN" --role-session-name "tg-${REQUEST_ID}" ${EXTERNAL_ID:+--external-id "$EXTERNAL_ID"} --duration-seconds 3600)"
+      - export AWS_ACCESS_KEY_ID="$(jq -r '.Credentials.AccessKeyId' <<<"$CREDS_JSON")"
+      - export AWS_SECRET_ACCESS_KEY="$(jq -r '.Credentials.SecretAccessKey' <<<"$CREDS_JSON")"
+      - export AWS_SESSION_TOKEN="$(jq -r '.Credentials.SessionToken' <<<"$CREDS_JSON")"
+      - aws sts get-caller-identity --query Arn --output text
+
+  build:
+    commands:
+      - echo "[INFO] Running Terragrunt from $INTAKE_DIR in $AWS_DEFAULT_REGION"
+      - cd "$INTAKE_DIR"
+      - export TERRAGRUNT_NON_INTERACTIVE=true
+      - export TG_PARALLELISM="${TG_PARALLELISM:-6}"
+      # Decommission path
+      - |
+        if [[ "$IS_DECOM" == "true" ]]; then
+          echo "[INFO] is_decommissioned=true → destroying stack"
+          terragrunt run-all destroy -auto-approve --terragrunt-parallelism "$TG_PARALLELISM"
+          exit 0
+        fi
+      # Modified path (simple apply; fine for adds/changes)
+      - |
+        if [[ "$IS_MOD" == "true" ]]; then
+          echo "[INFO] is_modified=true → applying updates"
+        fi
+      - terragrunt run-all apply -auto-approve --terragrunt-parallelism "$TG_PARALLELISM"
+
+  post_build:
+    commands:
+      - echo "[INFO] Completed: $INTAKE_DIR"
