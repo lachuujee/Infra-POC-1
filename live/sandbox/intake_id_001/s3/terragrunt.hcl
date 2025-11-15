@@ -1,7 +1,5 @@
 # Simple: S3 Terragrunt config
 
-# (No explicit dependencies for S3)
-
 locals {
   # Where we are (works in active and /decommission)
   this_dir        = get_terragrunt_dir()
@@ -20,8 +18,10 @@ locals {
 
   # Wrapper-agnostic + versioned modules support
   # .../<infra_root>/live/sandbox/<intake_id>/...
-  infra_root  = dirname(dirname(dirname(local.intake_dir)))
-  modules_dir = coalesce(get_env("MODULES_DIR", ""), "modules")  # e.g., modules or modules/v1
+  infra_root = dirname(dirname(dirname(local.intake_dir)))
+
+  # Use MODULES_DIR if set (e.g., "modules/v1"); else default to "modules"
+  modules_dir = get_env("MODULES_DIR", "modules")
 
   # Region / env / req
   region = coalesce(
@@ -58,7 +58,7 @@ terraform {
 remote_state {
   backend = "s3"
   config = {
-    bucket  = "wbd-tf-state-sandbox"
+    bucket  = "wbd-tf-state-sandbox-poc"
     key     = "${local.state_prefix}/${local.component}/terraform.tfstate"
     region  = try(local.cfg.state.region, "us-east-1")
     encrypt = true
@@ -106,5 +106,3 @@ inputs = {
     }
   )
 }
-
-# File: terragrunt.hcl (s3)
