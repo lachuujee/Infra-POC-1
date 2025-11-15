@@ -1,6 +1,4 @@
-# Simple: S3 Terragrunt config
-
-# (No explicit dependencies for S3)
+# File: live/sandbox/<intake_id>/s3/terragrunt.hcl
 
 locals {
   # Where we are (works in active and /decommission)
@@ -8,32 +6,32 @@ locals {
   parent_dir      = dirname(local.this_dir)
   is_decommission = basename(local.parent_dir) == "decommission"
 
-  # Intake dir/id
+  # Intake dir/id (root of the intake)
   intake_dir = local.is_decommission ? dirname(local.parent_dir) : local.parent_dir
   intake_id  = basename(local.intake_dir)
 
-  # Load inputs
-  cfg = jsondecode(file(find_in_parent_folders("inputs.json")))
+  # Load inputs.json from the intake root
+  cfg = jsondecode(file("${local.intake_dir}/inputs.json"))
 
-  # Component
-  component = basename(local.this_dir)  # "s3"
+  # Component name ("s3")
+  component = basename(local.this_dir)
 
-  # Wrapper-agnostic + versioned modules support
-  # .../<infra_root>/live/sandbox/<intake_id>/...
+  # Infra root: .../<repo_root>/live/sandbox/<intake_id>/s3
   infra_root  = dirname(dirname(dirname(local.intake_dir)))
-  modules_dir = coalesce(get_env("MODULES_DIR", ""), "modules")  # e.g., modules or modules/v1
+  modules_dir = get_env("MODULES_DIR", "modules") # e.g. "modules" or "modules/v1"
 
-  # Region / env / req
+  # Region / env / request id
   region = coalesce(
     try(local.cfg.aws_region, ""),
     get_env("AWS_REGION", ""),
     get_env("AWS_DEFAULT_REGION", ""),
     "us-east-1"
   )
+
   env = try(local.cfg.environment, "SBX")
   req = try(local.cfg.request_id, local.intake_id)
 
-  # Module block tolerant to labels ("s3", "AWS s3", "S3")
+  # Module block from inputs.json (supports "s3", "AWS s3", "S3")
   mod = try(
     local.cfg.modules[local.component],
     local.cfg.modules["AWS ${local.component}"],
@@ -41,24 +39,27 @@ locals {
     {}
   )
 
-  # Uniform Name: sbx_intake_id_001-s3-dev
+  # Dynamic enable flag (from inputs.json)
+  enabled = try(local.mod.enabled, false)
+
+  # Uniform name: sbx_intake_id_001-s3-dev
   name_base = lower(try(local.cfg.sandbox_name, "${local.env}_${local.req}"))
   name_env  = lower(local.env)
   name_std  = "${local.name_base}-${local.component}-${local.name_env}"
 
-  # State prefix
+  # State prefix for remote state
   state_prefix = "wbd/sandbox/${local.intake_id}"
 }
 
 terraform {
-  # Dynamic module source (wrapper-friendly + versioned modules)
+  # Dynamic module source (MODULES_DIR can be "modules" or "modules/v1")
   source = "${local.infra_root}/${local.modules_dir}/${local.component}"
 }
 
 remote_state {
   backend = "s3"
   config = {
-    bucket  = "wbd-tf-state-sandbox"
+    bucket  = "wbd-tf-state-sandbox" # change if your state bucket name is different
     key     = "${local.state_prefix}/${local.component}/terraform.tfstate"
     region  = try(local.cfg.state.region, "us-east-1")
     encrypt = true
@@ -76,8 +77,8 @@ EOF
 }
 
 inputs = {
-  # Enabled from inputs.json
-  enabled     = try(local.mod.enabled, false)
+  # Passed into the Terraform S3 module
+  enabled     = local.enabled
 
   # Names
   name        = local.name_std
@@ -106,5 +107,3 @@ inputs = {
     }
   )
 }
-
-# File: terragrunt.hcl (s3)
