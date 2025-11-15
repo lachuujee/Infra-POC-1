@@ -2,95 +2,140 @@ version: 0.2
 
 env:
   variables:
+    # Terraform/Terragrunt versions compatible with your constraints (TF >= 1.5.0)
     TF_VERSION: "1.7.5"
     TG_VERSION: "0.67.6"
-    TG_PARALLELISM: "10"   # tune if needed
+    # Max modules Terragrunt will run concurrently (tune per API limits)
+    TG_PARALLELISM: "8"
 
 phases:
   install:
     commands:
+      # Fail fast and treat unset vars as errors
       - set -euo pipefail
-      - echo "[INSTALL] Using region: ${AWS_DEFAULT_REGION}"
-      - echo "[INSTALL] Installing unzip..."
-      - yum -y install unzip >/dev/null
-      - echo "[INSTALL] Installing Terraform ${TF_VERSION}..."
-      - curl -fsSL -o /tmp/tf.zip https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip
-      - unzip -o /tmp/tf.zip -d /usr/local/bin >/dev/null
-      - terraform -version
-      - echo "[INSTALL] Installing Terragrunt v${TG_VERSION}..."
-      - curl -fsSL -o /usr/local/bin/terragrunt https://github.com/gruntwork-io/terragrunt/releases/download/v${TG_VERSION}/terragrunt_linux_amd64
-      - chmod +x /usr/local/bin/terragrunt
-      - terragrunt -version
-      - echo "[INSTALL] Installing jq..."
-      - yum -y install jq >/dev/null
+      # Install basic tools (jq, unzip, curl)
+      - yum -y install jq unzip curl >/dev/null
+      # Install Terraform binary
+      - |
+        echo "# Install Terraform"
+        curl -fsSL -o /tmp/tf.zip https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip
+        unzip -o /tmp/tf.zip -d /usr/local/bin >/dev/null
+        terraform -version
+      # Install Terragrunt binary
+      - |
+        echo "# Install Terragrunt"
+        curl -fsSL -o /usr/local/bin/terragrunt https://github.com/gruntwork-io/terragrunt/releases/download/v${TG_VERSION}/terragrunt_linux_amd64
+        chmod +x /usr/local/bin/terragrunt
+        terragrunt -version
+
   pre_build:
     commands:
-      - echo "[PRE] Locating latest intake folder under live/sandbox..."
       - |
+        echo "# Resolve intake directory (prefer auto; allow no-op)"
         cd "$CODEBUILD_SRC_DIR"
-        ls -la
-        INTAKE_DIR="$(ls -1d live/sandbox/intake_id_* 2>/dev/null | sort -V | tail -n1 || true)"
-        if [ -z "${INTAKE_DIR}" ]; then
-          echo "[ERROR] No live/sandbox/intake_id_* directory found in repo." >&2
-          exit 1
+        # Try env override first (if pipeline/Lambda set INTAKE_DIR)
+        if [[ -n "${INTAKE_DIR:-}" && -d "${INTAKE_DIR}" ]]; then
+          echo "[PRE] Using provided INTAKE_DIR=${INTAKE_DIR}"
+        else
+          # Derive latest intake folder when none provided
+          INTAKE_DIR="$(ls -1d live/sandbox/intake_id_* 2>/dev/null | sort -V | tail -n1 || true)"
+        fi
+        # If no intake folder at all, exit successfully (no-op test/commit)
+        if [[ -z "${INTAKE_DIR}" || ! -d "${INTAKE_DIR}" ]]; then
+          echo "[PRE] No intake folders found. Writing NOOP artifact and exiting 0."
+          mkdir -p build-status && printf '{"status":"noop","reason":"no_intake_dir"}' > build-status/result.json
+          exit 0
         fi
         echo "[PRE] Selected intake dir: ${INTAKE_DIR}"
-        JSON_PATH="${INTAKE_DIR}/inputs.json"
-        if [ ! -f "${JSON_PATH}" ]; then
-          echo "[ERROR] inputs.json not found at ${JSON_PATH}" >&2
-          exit 1
-        fi
-        echo "[PRE] inputs.json:"
-        cat "${JSON_PATH}" | jq .
+
       - |
-        echo "[PRE] Extracting destination assume role (assume_role_arn || iam_role)..."
+        echo "# Load inputs.json and set region"
+        JSON_PATH="${INTAKE_DIR}/inputs.json"
+        if [[ ! -f "${JSON_PATH}" ]]; then
+          echo "[PRE] No inputs.json; writing NOOP artifact and exiting 0."
+          mkdir -p build-status && printf '{"status":"noop","reason":"no_inputs_json"}' > build-status/result.json
+          exit 0
+        fi
+        cat "${JSON_PATH}" | jq .
+        REGION="$(jq -r '.region // .aws_region // "us-east-1"' "${JSON_PATH}")"
+        export AWS_DEFAULT_REGION="${REGION}"
+        echo "[PRE] Region set to ${AWS_DEFAULT_REGION}"
+
+      - |
+        echo "# Assume destination role if provided"
         ROLE_ARN="$(jq -r '.assume_role_arn // .iam_role // empty' "${JSON_PATH}")"
-        if [ -n "${ROLE_ARN}" ]; then
+        if [[ -n "${ROLE_ARN}" && "${ROLE_ARN}" != "null" ]]; then
           echo "[PRE] Assuming role: ${ROLE_ARN}"
-          CREDS_JSON="$(aws sts assume-role --role-arn "${ROLE_ARN}" --role-session-name SandboxProvision --output json)"
-          export AWS_ACCESS_KEY_ID="$(echo "${CREDS_JSON}" | jq -r .Credentials.AccessKeyId)"
-          export AWS_SECRET_ACCESS_KEY="$(echo "${CREDS_JSON}" | jq -r .Credentials.SecretAccessKey)"
-          export AWS_SESSION_TOKEN="$(echo "${CREDS_JSON}" | jq -r .Credentials.SessionToken)"
+          CREDS_JSON="$(aws sts assume-role --role-arn "${ROLE_ARN}" --role-session-name tg-${CODEBUILD_BUILD_ID##*:} --duration-seconds 3600)"
+          export AWS_ACCESS_KEY_ID="$(jq -r '.Credentials.AccessKeyId'    <<< "${CREDS_JSON}")"
+          export AWS_SECRET_ACCESS_KEY="$(jq -r '.Credentials.SecretAccessKey' <<< "${CREDS_JSON}")"
+          export AWS_SESSION_TOKEN="$(jq -r '.Credentials.SessionToken'   <<< "${CREDS_JSON}")"
           aws sts get-caller-identity --query Arn --output text
         else
-          echo "[PRE] No role provided in inputs.json; using current credentials."
+          echo "[PRE] No role ARN in inputs.json; using current CodeBuild credentials."
         fi
+
   build:
     commands:
-      - echo "[BUILD] Starting APPLY from ${INTAKE_DIR} (excluding versions/ and decommission/)..."
       - |
+        echo "# Apply pass from intake root (exclude versions/ and decommission/)"
         cd "${INTAKE_DIR}"
-        # Init (idempotent) to avoid first-run backend prompts
-        terragrunt run-all init -reconfigure --terragrunt-non-interactive --terragrunt-parallelism ${TG_PARALLELISM} || true
-        terragrunt run-all apply \
-          --terragrunt-non-interactive \
-          --terragrunt-parallelism ${TG_PARALLELISM} \
-          --terragrunt-exclude-dir versions \
-          --terragrunt-exclude-dir decommission \
-          -auto-approve
-      - |
-        echo "[BUILD] Checking for decommission modules..."
-        if [ -d "decommission" ] && find decommission -type f -name terragrunt.hcl -print -quit | grep -q . ; then
-          echo "[BUILD] decommission/ found with modules. Running DESTROY inside decommission/..."
-          cd decommission
-          terragrunt run-all init -reconfigure --terragrunt-non-interactive --terragrunt-parallelism ${TG_PARALLELISM} || true
-          terragrunt run-all destroy \
-            --terragrunt-non-interactive \
-            --terragrunt-parallelism ${TG_PARALLELISM} \
-            -auto-approve
-          cd ..
+        export TERRAGRUNT_NON_INTERACTIVE=true
+        EXCLUDES=( --terragrunt-exclude-dir versions --terragrunt-exclude-dir decommission )
+        # Fast init to avoid any first-run prompts (ignore if already inited)
+        terragrunt run-all init -reconfigure --terragrunt-parallelism ${TG_PARALLELISM} || true
+        # Apply active modules only (excluding snapshots and decommission set)
+        if terragrunt run-all apply --terragrunt-parallelism ${TG_PARALLELISM} "${EXCLUDES[@]}" -auto-approve; then
+          APP_RC=0
         else
-          echo "[BUILD] No decommission work detected. Skipping destroy."
+          APP_RC=$?
         fi
+        echo "[BUILD] Apply return code: ${APP_RC}"
+
+      - |
+        echo "# Fallback: if apply failed and decommission exists → destroy then retry apply once"
+        DEC_PRESENT=false
+        if [[ -d "decommission" ]] && find decommission -type f -name terragrunt.hcl -print -quit | grep -q . ; then
+          DEC_PRESENT=true
+        fi
+        if [[ ${APP_RC} -ne 0 && "${DEC_PRESENT}" == "true" ]]; then
+          echo "[BUILD] Apply failed; running decommission-first fallback..."
+          ( cd decommission && terragrunt run-all init -reconfigure --terragrunt-parallelism ${TG_PARALLELISM} || true )
+          ( cd decommission && terragrunt run-all destroy --terragrunt-parallelism ${TG_PARALLELISM} -auto-approve ) || true
+          echo "[BUILD] Retrying apply after decommission..."
+          if terragrunt run-all apply --terragrunt-parallelism ${TG_PARALLELISM} "${EXCLUDES[@]}" -auto-approve; then
+            APP_RC=0
+          else
+            APP_RC=$?
+          fi
+        fi
+
+      - |
+        echo "# Final decommission pass (clean up any requested deletions)"
+        DEC_RC=0
+        if [[ "${DEC_PRESENT}" == "true" ]]; then
+          ( cd decommission && terragrunt run-all destroy --terragrunt-parallelism ${TG_PARALLELISM} -auto-approve ) || DEC_RC=$?
+        else
+          echo "[BUILD] No decommission folder; skipping destroy."
+        fi
+
+      - |
+        echo "# Evaluate final status (fail if either pass failed)"
+        if [[ ${APP_RC} -ne 0 || ${DEC_RC} -ne 0 ]]; then
+          echo "[ERROR] Provision RC=${APP_RC}, Decommission RC=${DEC_RC}"
+          exit 1
+        fi
+        echo "[SUCCESS] Provision + Decommission completed."
+
   post_build:
     commands:
       - |
-        echo "[POST] Writing build status artifact..."
+        echo "# Emit success artifact for pipeline visibility"
         mkdir -p build-status
-        cat > build-status/result.json <<'JSON'
-        { "status": "success", "message": "Apply (and optional decommission destroy) completed" }
-        JSON
+        printf '{"status":"success","intake_dir":"%s"}' "${INTAKE_DIR}" > build-status/result.json
+
 artifacts:
+  # Keep a tiny artifact so Build stages expecting an output won't fail
   files:
     - build-status/result.json
   name: BuildArtifact
