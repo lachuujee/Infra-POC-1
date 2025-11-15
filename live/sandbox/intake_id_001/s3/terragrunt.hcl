@@ -1,4 +1,4 @@
-# File: live/sandbox/<intake_id>/s3/terragrunt.hcl
+# File: live/sandbox/<intake_id_001>/s3/terragrunt.hcl
 
 locals {
   # Where we are (works in active and /decommission)
@@ -10,15 +10,17 @@ locals {
   intake_dir = local.is_decommission ? dirname(local.parent_dir) : local.parent_dir
   intake_id  = basename(local.intake_dir)
 
-  # Load inputs.json from the intake root
+  # Load inputs.json from intake root
   cfg = jsondecode(file("${local.intake_dir}/inputs.json"))
 
   # Component name ("s3")
   component = basename(local.this_dir)
 
-  # Infra root: .../<repo_root>/live/sandbox/<intake_id>/s3
+  # Repo root: .../<repo_root>/live/sandbox/<intake_id>/s3
   infra_root  = dirname(dirname(dirname(local.intake_dir)))
-  modules_dir = get_env("MODULES_DIR", "modules") # e.g. "modules" or "modules/v1"
+
+  # HARD-CODED modules dir to avoid bad env values
+  modules_dir = "modules/v1"   # or "modules" if that’s your structure
 
   # Region / env / request id
   region = coalesce(
@@ -47,19 +49,19 @@ locals {
   name_env  = lower(local.env)
   name_std  = "${local.name_base}-${local.component}-${local.name_env}"
 
-  # State prefix for remote state
+  # State prefix
   state_prefix = "wbd/sandbox/${local.intake_id}"
 }
 
 terraform {
-  # Dynamic module source (MODULES_DIR can be "modules" or "modules/v1")
+  # Pure local path: <repo_root>/modules/v1/s3
   source = "${local.infra_root}/${local.modules_dir}/${local.component}"
 }
 
 remote_state {
   backend = "s3"
   config = {
-    bucket  = "wbd-tf-state-sandbox" # change if your state bucket name is different
+    bucket  = "wbd-tf-state-sandbox-mayur"  # your state bucket
     key     = "${local.state_prefix}/${local.component}/terraform.tfstate"
     region  = try(local.cfg.state.region, "us-east-1")
     encrypt = true
@@ -72,12 +74,17 @@ generate "provider" {
   contents  = <<EOF
 provider "aws" {
   region = "${local.region}"
+
+  assume_role {
+    role_arn     = "${try(local.cfg.iam_role, "")}"
+    session_name = "SandboxProvisioningSession"
+  }
 }
 EOF
 }
 
 inputs = {
-  # Passed into the Terraform S3 module
+  # Enabled from inputs.json
   enabled     = local.enabled
 
   # Names
