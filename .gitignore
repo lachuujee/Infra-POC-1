@@ -13,3 +13,7 @@ terraform.tfvars
 .DS_Store
 Thumbs.db
 .vscode/
+
+
+.github/instructions/kluster-code-verify.instructions.md
+.kluster
