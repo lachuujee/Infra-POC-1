@@ -2,115 +2,103 @@ version: 0.2
 
 env:
   variables:
-    TF_VERSION: "1.7.5"          # Terraform to install
-    TG_VERSION: "0.67.6"         # Terragrunt to install
-    TG_PARALLELISM: "8"          # Optional: run-all parallelism
-    MODULES_DIR: "modules/v1"    # Read by terragrunt.hcl (coalesce(get_env("MODULES_DIR"), ...))
+    AWS_REGION: "us-east-1"
+    MODULES_DIR: "modules/v1"
+  shell: bash
 
 phases:
   install:
+    runtime-versions:
+      python: 3.11
     commands:
-      - set -euo pipefail
-      - echo "[INSTALL] Installing jq and unzip"
-      - yum -y install jq unzip >/dev/null
+      - echo "[INFO] 🔧 Installing Terraform, Terragrunt and required utilities..."
+
+      # Install unzip + jq if not present (handles both Amazon Linux / Ubuntu images)
       - |
-        echo "[INSTALL] Terraform ${TF_VERSION}"
-        curl -fsSL -o /tmp/tf.zip "https://releases.hashicorp.com/terraform/${TF_VERSION}/terraform_${TF_VERSION}_linux_amd64.zip"
-        unzip -o /tmp/tf.zip -d /usr/local/bin >/dev/null
-        terraform -version
+        if ! command -v unzip >/dev/null 2>&1; then
+          echo "[INFO] 📦 Installing unzip and jq..."
+          if command -v yum >/dev/null 2>&1; then
+            yum install -y unzip jq
+          elif command -v apt-get >/dev/null 2>&1; then
+            apt-get update && apt-get install -y unzip jq
+          else
+            echo "[WARN] ⚠️ Neither yum nor apt-get found. Skipping package install."
+          fi
+        else
+          echo "[INFO] ✅ unzip already installed"
+        fi
+
+      # Install Terraform
       - |
-        echo "[INSTALL] Terragrunt ${TG_VERSION}"
-        curl -fsSL -o /usr/local/bin/terragrunt "https://github.com/gruntwork-io/terragrunt/releases/download/v${TG_VERSION}/terragrunt_linux_amd64"
+        TERRAFORM_VERSION="1.9.8"
+        echo "[INFO] 📥 Downloading Terraform v${TERRAFORM_VERSION}..."
+        curl -sLo terraform.zip "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+        unzip -o terraform.zip
+        mv terraform /usr/local/bin/terraform
+        chmod +x /usr/local/bin/terraform
+        rm -f terraform.zip
+        echo "[INFO] ✅ Terraform installed at $(command -v terraform)"
+
+      # Install Terragrunt
+      - |
+        TERRAGRUNT_VERSION="0.67.0"
+        echo "[INFO] 📥 Downloading Terragrunt v${TERRAGRUNT_VERSION}..."
+        curl -sLo /usr/local/bin/terragrunt "https://github.com/gruntwork-io/terragrunt/releases/download/v${TERRAGRUNT_VERSION}/terragrunt_linux_amd64"
         chmod +x /usr/local/bin/terragrunt
-        terragrunt -version
+        echo "[INFO] ✅ Terragrunt installed at $(command -v terragrunt)"
+
+      # Verify dependencies (same as what your teammate had, but now they actually exist)
+      - echo "[INFO] 🔧 Verifying dependencies......"
+      - terraform --version
+      - terragrunt --version
+      - aws --version || echo "[WARN] ⚠️ aws CLI not found in PATH"
+      - python --version
+      - jq --version
+      - git --version
+      - curl --version
 
   pre_build:
     commands:
-      - set -euo pipefail
-      - echo "[PRE] Resolve latest intake folder"
-      - cd "$CODEBUILD_SRC_DIR"
-      - |
-        if [[ -n "${INTAKE_DIR:-}" && -d "${INTAKE_DIR}" ]]; then
-          sel="${INTAKE_DIR}"
-        else
-          sel="$(find live/sandbox -maxdepth 1 -type d -name 'intake_id_*' 2>/dev/null | sort -V | tail -n1 || true)"
+      - echo "[INFO] 🔍 Detecting latest INTAKE_ID in Sandbox-Infra/live/sandbox..."
+      - cd Sandbox-Infra/live/sandbox || { echo "[ERROR] ❌ Sandbox-Infra/live/sandbox not found"; exit 1; }
+      - echo "[DEBUG] Listing sandbox directory structure (top 50 lines):"
+      - ls -R | head -50
+      # Detect latest INTAKE_ID folder
+      - >
+        INTAKE_ID=$(find . -maxdepth 1 -type d -printf '%f\n' | grep -E '^INTAKE_ID_' | sort -V | tail -n1) &&
+        [ -n "$INTAKE_ID" ] || { echo "[ERROR] ❌ No INTAKE_ID_* directory found!"; exit 1; }
+      - echo "[INFO] ✅ Detected latest INTAKE_ID:" $INTAKE_ID
+      - export INTAKE_ID
+      # Detect inputs.json
+      - JSON_PATH="./$INTAKE_ID/inputs.json"
+      - if [ ! -f "$JSON_PATH" ]; then
+          echo "[ERROR] ❌ inputs.json not found at $JSON_PATH";
+          echo "[DEBUG] Listing current folder content:";
+          ls -R;
+          exit 1;
         fi
-        if [[ -z "$sel" || ! -d "$sel" ]]; then
-          echo "[PRE] No intake dir; writing NOOP and exiting 0"
-          mkdir -p build-status && printf '{"status":"noop","reason":"no_intake_dir"}' > build-status/result.json
-          exit 0
-        fi
-        export INTAKE_DIR="$sel"; echo "[PRE] INTAKE_DIR=$INTAKE_DIR"
+      - echo "[INFO] ✅ Found inputs.json at $JSON_PATH"
+      - cat "$JSON_PATH" | jq .
+      - export AWS_ACCOUNT_ID=$(jq -r '.aws_account_id' "$JSON_PATH")
+      - export IAM_ROLE=$(jq -r '.iam_role' "$JSON_PATH")
+      - export REQUEST_ID=$(jq -r '.request_id' "$JSON_PATH")
 
-      - |
-        JSON_PATH="${INTAKE_DIR}/inputs.json"
-        if [[ ! -f "$JSON_PATH" ]]; then
-          echo "[PRE] inputs.json missing; NOOP"
-          mkdir -p build-status && printf '{"status":"noop","reason":"no_inputs_json"}' > build-status/result.json
-          exit 0
+      - if [ -z "$AWS_ACCOUNT_ID" ] || [ "$AWS_ACCOUNT_ID" == "null" ]; then
+          echo "[ERROR] ❌ aws_account_id missing in inputs.json";
+          exit 1;
         fi
-        cat "$JSON_PATH" | jq .
-        export AWS_DEFAULT_REGION="$(jq -r '.region // .aws_region // "us-east-1"' "$JSON_PATH")"
-        echo "[PRE] Region -> $AWS_DEFAULT_REGION"
-
-      - |
-        ROLE_ARN="$(jq -r '.assume_role_arn // .iam_role // empty' "$JSON_PATH")"
-        if [[ -n "$ROLE_ARN" && "$ROLE_ARN" != "null" ]]; then
-          echo "[PRE] Assuming role: $ROLE_ARN"
-          CREDS_JSON="$(aws sts assume-role --role-arn "$ROLE_ARN" --role-session-name tg-${CODEBUILD_BUILD_ID##*:} --duration-seconds 3600)"
-          export AWS_ACCESS_KEY_ID="$(jq -r '.Credentials.AccessKeyId'    <<< "$CREDS_JSON")"
-          export AWS_SECRET_ACCESS_KEY="$(jq -r '.Credentials.SecretAccessKey' <<< "$CREDS_JSON")"
-          export AWS_SESSION_TOKEN="$(jq -r '.Credentials.SessionToken'   <<< "$CREDS_JSON")"
-          aws sts get-caller-identity --query Arn --output text
-        else
-          echo "[PRE] No assume role; using CodeBuild credentials"
+      - if [ -z "$IAM_ROLE" ] || [ "$IAM_ROLE" == "null" ]; then
+          echo "[ERROR] ❌ iam_role missing in inputs.json";
+          exit 1;
         fi
+      - echo "$IAM_ROLE"
 
   build:
     commands:
-      - set +e
-      - cd "$INTAKE_DIR"
-      - export TERRAGRUNT_NON_INTERACTIVE=true
-      - TG_PAR_ARGS=( --terragrunt-parallelism "${TG_PARALLELISM}" )
-      - EXCLUDES=( --terragrunt-exclude-dir versions --terragrunt-exclude-dir decommission )
-      - echo "[BUILD] terragrunt init (best-effort)"; terragrunt run-all init -reconfigure "${TG_PAR_ARGS[@]}" || true
-      - echo "[BUILD] terragrunt apply (excluding versions/ & decommission/)"
-      - terragrunt run-all apply "${TG_PAR_ARGS[@]}" "${EXCLUDES[@]}" -auto-approve
-      - APP_RC=$?
-      - |
-        DEC_PRESENT=false
-        if [[ -d "decommission" ]] && find decommission -type f -name terragrunt.hcl -print -quit | grep -q . ; then
-          DEC_PRESENT=true
-        fi
-        if [[ $APP_RC -ne 0 && "$DEC_PRESENT" == "true" ]]; then
-          echo "[FALLBACK] Destroy decommission, then retry apply"
-          ( cd decommission && terragrunt run-all init -reconfigure "${TG_PAR_ARGS[@]}" || true )
-          ( cd decommission && terragrunt run-all destroy "${TG_PAR_ARGS[@]}" -auto-approve ) || true
-          terragrunt run-all apply "${TG_PAR_ARGS[@]}" "${EXCLUDES[@]}" -auto-approve
-          APP_RC=$?
-        fi
-      - |
-        DEC_RC=0
-        if [[ "$DEC_PRESENT" == "true" ]]; then
-          echo "[BUILD] Final decommission pass"
-          ( cd decommission && terragrunt run-all destroy "${TG_PAR_ARGS[@]}" -auto-approve ) || DEC_RC=$?
-        else
-          echo "[BUILD] No decommission folder; skipping"
-        fi
-      - echo "[BUILD] APP_RC=$APP_RC DEC_RC=$DEC_RC" ; echo "$APP_RC" >/tmp/app.rc ; echo "$DEC_RC" >/tmp/dec.rc
-
-  post_build:
-    commands:
-      - |
-        APP_RC="$(cat /tmp/app.rc 2>/dev/null || echo 0)"
-        DEC_RC="$(cat /tmp/dec.rc 2>/dev/null || echo 0)"
-        mkdir -p build-status
-        STATUS=$([ "$APP_RC" -eq 0 ] && [ "$DEC_RC" -eq 0 ] && echo success || echo partial)
-        printf '{"status":"%s","intake_dir":"%s","app_rc":%s,"dec_rc":%s}\n' "$STATUS" "${INTAKE_DIR:-}" "$APP_RC" "$DEC_RC" > build-status/result.json
-        echo "[POST] Wrote build-status/result.json -> $STATUS"
-
-artifacts:
-  files:
-    - build-status/result.json
-  name: BuildArtifact
-  discard-paths: yes
+      - echo "$IAM_ROLE"
+      - echo "[INFO] 🔧 Initializing Terragrunt for $INTAKE_ID..."
+      - cd "./$INTAKE_ID"
+      - terragrunt run-all init -reconfigure --terragrunt-non-interactive
+      - echo "[INFO] 🚀 Running Terragrunt apply..."
+      - terragrunt run-all apply -auto-approve --terragrunt-non-interactive
+      - cd ../../../..
