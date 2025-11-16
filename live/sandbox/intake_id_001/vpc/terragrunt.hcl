@@ -21,7 +21,7 @@ locals {
   # Repo layout + versioned modules support
   # .../<infra_root>/live/sandbox/<intake_id>/...
   infra_root  = dirname(dirname(dirname(local.intake_dir)))
-  modules_dir = coalesce(get_env("MODULES_DIR", ""), "modules")  # e.g., modules or modules/v1
+  modules_dir = coalesce(get_env("MODULES_DIR", ""), "modules/v1")  # e.g., modules or modules/v1
 
   # Region / env / req
   region = coalesce(
