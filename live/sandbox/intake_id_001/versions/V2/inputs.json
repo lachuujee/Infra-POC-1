@@ -22,22 +22,18 @@
     },
     "AWS ec2": {
       "name": "sbx_intake_id_001-ec2",
-      "enabled": false
-    },
-    "AWS cdn": {
-      "name": "sbx_intake_id_001-cdn",
       "enabled": true
-    },
-    "AWS redshift": {
-      "name": "sbx_intake_id_001-redshift",
-      "enabled": false
     },
     "AWS efs": {
       "name": "sbx_intake_id_001-efs",
       "enabled": false
     },
-    "AWS ebs": {
-      "name": "sbx_intake_id_001-ebs",
+    "AWS ecs": {
+      "name": "sbx_intake_id_001-ecs",
+      "enabled": true
+    },
+    "AWS cdn": {
+      "name": "sbx_intake_id_001-aws-cdn",
       "enabled": false
     }
   }
