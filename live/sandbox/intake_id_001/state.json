@@ -1,0 +1,1 @@
+{"timestamp":"2025-11-18T11:54:55.594800Z","request_id":"INTAKE_ID_001","version":"V1","mode":"normal","branch":"main","added_modules":["ebs","ec2","efs","s3","vpc"],"decommissioned_modules":[],"copied":["ebs","ec2","efs","iam/instance_profile","keypair","s3","vpc"],"moved":[],"skipped":[]}
