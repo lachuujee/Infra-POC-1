@@ -23,7 +23,7 @@
     },
     "AWS ec2": {
       "name": "sbx_intake_id_001-ec2",
-      "enabled": false,
+      "enabled": true,
       "slug": "ec2",
       "previous_config": {
         "name": "sbx_intake_id_001-ec2",
@@ -66,9 +66,15 @@
       "status": "decommissioned"
     },
     "AWS cdn": {
-      "name": "sbx_intake_id_001-cdn",
-      "enabled": true,
-      "slug": "cdn"
+      "name": "sbx_intake_id_001-aws-cdn",
+      "enabled": false,
+      "slug": "cdn",
+      "previous_config": {
+        "name": "sbx_intake_id_001-aws-cdn",
+        "enabled": false,
+        "slug": "cdn"
+      },
+      "status": "decommissioned"
     },
     "AWS redshift": {
       "name": "sbx_intake_id_001-redshift",
@@ -80,6 +86,11 @@
         "slug": "redshift"
       },
       "status": "decommissioned"
+    },
+    "AWS ecs": {
+      "name": "sbx_intake_id_001-ecs",
+      "enabled": true,
+      "slug": "ecs"
     }
   }
 }
