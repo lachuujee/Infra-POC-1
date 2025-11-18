@@ -16,6 +16,17 @@
   "is_modified": true,
   "version": "V2",
   "modules": {
+    "AWS ec2": {
+      "name": "sbx_intake_id_001-ec2",
+      "enabled": false,
+      "slug": "ec2",
+      "previous_config": {
+        "name": "sbx_intake_id_001-ec2",
+        "enabled": false,
+        "slug": "ec2"
+      },
+      "status": "decommissioned"
+    },
     "AWS ebs": {
       "name": "sbx_intake_id_001-ebs",
       "enabled": false,
@@ -38,14 +49,14 @@
       },
       "status": "decommissioned"
     },
-    "AWS s3": {
-      "name": "sbx_intake_id_001-s3",
+    "AWS redshift": {
+      "name": "sbx_intake_id_001-redshift",
       "enabled": false,
-      "slug": "s3",
+      "slug": "redshift",
       "previous_config": {
-        "name": "sbx_intake_id_001-s3",
-        "enabled": true,
-        "slug": "s3"
+        "name": "sbx_intake_id_001-redshift",
+        "enabled": false,
+        "slug": "redshift"
       },
       "status": "decommissioned"
     }
