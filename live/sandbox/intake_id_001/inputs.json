@@ -10,8 +10,8 @@
     "Lakshmi.P@wbd.com",
     "Sai.Prathik@wbd.com"
   ],
-  "aws_account_id": "401935985059",
-  "iam_role": "arn:aws:iam::401935985059:role/CICDDeployerRole",
+  "aws_account_id": "123456789012",
+  "iam_role": "arn:aws:iam::123456789012:role/SandboxProvisioningRole",
   "environment": "dev",
   "is_modified": false,
   "version": "V1",
@@ -20,6 +20,26 @@
       "name": "sbx_intake_id_001-vpc",
       "enabled": true,
       "slug": "vpc"
+    },
+    "AWS ec2": {
+      "name": "sbx_intake_id_001-ec2",
+      "enabled": true,
+      "slug": "ec2"
+    },
+    "AWS ebs": {
+      "name": "sbx_intake_id_001-ebs",
+      "enabled": true,
+      "slug": "ebs"
+    },
+    "AWS efs": {
+      "name": "sbx_intake_id_001-efs",
+      "enabled": true,
+      "slug": "efs"
+    },
+    "AWS s3": {
+      "name": "sbx_intake_id_001-s3",
+      "enabled": true,
+      "slug": "s3"
     }
   }
 }
