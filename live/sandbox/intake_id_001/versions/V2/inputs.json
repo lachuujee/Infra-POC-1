@@ -22,7 +22,7 @@
     },
     "AWS ec2": {
       "name": "sbx_intake_id_001-ec2",
-      "enabled": true
+      "enabled": false
     },
     "AWS cdn": {
       "name": "sbx_intake_id_001-cdn",
@@ -30,7 +30,7 @@
     },
     "AWS redshift": {
       "name": "sbx_intake_id_001-redshift",
-      "enabled": true
+      "enabled": false
     },
     "AWS efs": {
       "name": "sbx_intake_id_001-efs",
