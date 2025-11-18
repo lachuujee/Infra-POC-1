@@ -1,1 +1,2 @@
 {"timestamp":"2025-11-15T23:57:18.092024Z","request_id":"INTAKE_ID_001","version":"V1","mode":"normal","branch":"main","added_modules":["vpc"],"decommissioned_modules":[],"copied":["vpc"],"moved":[],"skipped":[]}
+{"timestamp":"2025-11-18T11:06:43.800250Z","request_id":"INTAKE_ID_001","version":"V1","mode":"normal","branch":"main","added_modules":["ebs","ec2","efs","s3"],"decommissioned_modules":[],"copied":["ebs","ec2","efs","iam/instance_profile","keypair","s3","vpc"],"moved":[],"skipped":[]}
