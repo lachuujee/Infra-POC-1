@@ -1,0 +1,140 @@
+version: 0.2
+
+env:
+  variables:
+    AWS_REGION: "us-east-1"
+    DDB_TABLE: "SandboxLifecycleTable"
+    AVAILABLE_OU_NAME: "Available"
+    ACTIVE_OU_NAME: "Active"
+    MODULES_DIR: "modules/v1"
+    STEP_FUNCTION_ARN: "arn:aws:states:us-east-1:476885575101:stateMachine:SandboxLifecycleStateMachine"
+    EXTERNAL_ID: "sandbox-cicd-access"
+  shell: bash
+
+phases:
+  install:
+    runtime-versions:
+      python: 3.11
+    commands:
+      - echo "[INFO] Verifying dependencies..."
+      - terraform --version
+      - terragrunt --version
+      - aws --version
+      - python --version
+      - jq --version
+      - git --version
+      - curl --version
+
+  pre_build:
+    commands:
+      - |
+        TS=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+        export TF_VAR_created_on="$TS"
+        export TF_VAR_modified_on="$TS"
+      - echo "[INFO] Discovering intake_id_* folders..."
+      - |
+        if [ -d Sandbox-Infra/live/sandbox ]; then
+          echo "[INFO] PWD in pre_build: $(pwd)"
+          echo "[INFO] Listing Sandbox-Infra/live/sandbox (top 50 lines):"
+          ls -R Sandbox-Infra/live/sandbox | head -50
+          INTAKE_LIST=$(find Sandbox-Infra/live/sandbox -maxdepth 1 -mindepth 1 -type d -name 'intake_id_*' -printf '%f\n' 2>/dev/null | sort)
+        else
+          echo "[WARN] Sandbox-Infra/live/sandbox not found in pre_build"
+          INTAKE_LIST=""
+        fi
+
+        if [ -z "$INTAKE_LIST" ]; then
+          echo "[WARN] No intake_id_* folders detected. Nothing to do."
+          touch /tmp/no_intakes
+        else
+          echo "[INFO] Intake IDs to process:"
+          printf '%s\n' "$INTAKE_LIST"
+          printf '%s\n' "$INTAKE_LIST" > /tmp/intakes.txt
+        fi
+
+  build:
+    commands:
+      - |
+        # If there are no intake folders, exit the whole build phase cleanly
+        if [ -f /tmp/no_intakes ]; then
+          echo "[INFO] No impacted intakes. Exiting successfully."
+          exit 0
+        fi
+
+        echo "[INFO] PWD at start of build: $(pwd)"
+
+        cd Sandbox-Infra/live/sandbox || { echo "[ERROR] Sandbox-Infra/live/sandbox not found"; exit 1; }
+
+        while read -r INTAKE_ID; do
+          [ -z "$INTAKE_ID" ] && continue
+          echo "=============================="
+          echo "[INFO] Processing intake: $INTAKE_ID"
+          echo "=============================="
+
+          JSON_PATH="./$INTAKE_ID/inputs.json"
+          if [ ! -f "$JSON_PATH" ]; then
+            echo "[ERROR] inputs.json not found for $INTAKE_ID at $JSON_PATH"
+            exit 1
+          fi
+
+          export AWS_ACCOUNT_ID=$(jq -r '.aws_account_id' "$JSON_PATH")
+          export IAM_ROLE=$(jq -r '.iam_role' "$JSON_PATH")
+          export REQUEST_ID=$(jq -r '.request_id' "$JSON_PATH")
+
+          echo "[INFO] aws_account_id=$AWS_ACCOUNT_ID"
+          echo "[INFO] iam_role=$IAM_ROLE"
+          echo "[INFO] request_id=$REQUEST_ID"
+
+          # 1) Decommission (destroy) if decommission folder exists
+          if [ -d "./$INTAKE_ID/decommission" ]; then
+            echo "[INFO] Running decommission destroy for $INTAKE_ID..."
+            cd "./$INTAKE_ID/decommission"
+            terragrunt run-all init -reconfigure --terragrunt-non-interactive
+            terragrunt run-all destroy -auto-approve --terragrunt-non-interactive
+            DESTROY_STATUS=$?
+            cd ../../
+
+            if [ $DESTROY_STATUS -ne 0 ]; then
+              echo "[ERROR] Decommission destroy failed for $INTAKE_ID (exit code $DESTROY_STATUS)"
+              exit $DESTROY_STATUS
+            fi
+
+            echo "[INFO] Decommission destroy successful for $INTAKE_ID, removing local decommission folder..."
+            rm -rf "./$INTAKE_ID/decommission"
+          else
+            echo "[INFO] No decommission folder for $INTAKE_ID in this workspace."
+          fi
+
+          # 2) Provision / modify (exclude decommission dir so it never gets applied)
+          echo "[INFO] Running provisioning apply for $INTAKE_ID (excluding decommission)..."
+          cd "./$INTAKE_ID"
+          terragrunt run-all init -reconfigure --terragrunt-non-interactive
+          terragrunt run-all apply \
+            -auto-approve \
+            --terragrunt-non-interactive \
+            --terragrunt-exclude-dir "./decommission"
+          APPLY_STATUS=$?
+          cd ..
+
+          if [ $APPLY_STATUS -ne 0 ]; then
+            echo "[ERROR] Provision/apply failed for $INTAKE_ID (exit code $APPLY_STATUS)"
+            exit $APPLY_STATUS
+          fi
+
+        done < /tmp/intakes.txt
+
+  post_build:
+    commands:
+      - |
+        echo "[INFO] PWD in post_build (entry): $(pwd)"
+        echo "[INFO] Changing to CODEBUILD_SRC_DIR: ${CODEBUILD_SRC_DIR}"
+        cd "${CODEBUILD_SRC_DIR}"
+        echo "[INFO] PWD in post_build (after cd): $(pwd)"
+        echo "[INFO] Top-level entries from CODEBUILD_SRC_DIR:"
+        ls
+        echo "[INFO] Sandbox-Infra subtree (top 50 lines):"
+        ls -R Sandbox-Infra | head -50
+
+        echo "[INFO] Starting post_build webhook processing..."
+        chmod +x Sandbox-Infra/scripts/automation_webhook_post_build.sh || echo "[WARN] Could not mark automation_webhook_post_build.sh as executable; attempting to run anyway."
+        bash Sandbox-Infra/scripts/automation_webhook_post_build.sh
